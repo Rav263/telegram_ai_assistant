@@ -13,4 +13,7 @@
 - Added Postgres schema and repository ports.
 - Added Telegram ingestion normalization and content extractor ports.
 - Added LM Studio client and extraction service.
+- Added configurable Telegram history backfill jobs.
+- Added owner-only summary bot routing and Bot API client.
+- Added health checks for runtime components.
 - Added local operations runbooks and manual unread smoke test checklist.
