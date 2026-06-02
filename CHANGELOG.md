@@ -11,4 +11,5 @@
 - Added read-only guard for Telegram methods that could mutate account state.
 - Added environment config loading and CLI skeleton.
 - Added Postgres schema and repository ports.
+- Added Telegram ingestion normalization and content extractor ports.
 - Added local operations runbooks and manual unread smoke test checklist.
