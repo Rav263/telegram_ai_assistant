@@ -17,4 +17,5 @@
 - Added configurable Telegram history backfill jobs.
 - Added owner-only summary bot routing and Bot API client.
 - Added health checks for runtime components.
+- Added CLI runtime dispatch and offline health command.
 - Added local operations runbooks and manual unread smoke test checklist.
