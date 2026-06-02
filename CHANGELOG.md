@@ -10,3 +10,4 @@
 - Added owner-only access control for the summary bot.
 - Added read-only guard for Telegram methods that could mutate account state.
 - Added environment config loading and CLI skeleton.
+- Added local operations runbooks and manual unread smoke test checklist.
