@@ -52,6 +52,45 @@ class DBSchemaTests(unittest.TestCase):
             schema,
         )
 
+    def test_chats_include_ingestion_cursor_columns(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertRegex(
+            schema,
+            r"last_ingested_message_id\s+bigint\s+not\s+null\s+default\s+0",
+        )
+        self.assertRegex(schema, r"last_ingested_at\s+timestamptz")
+        self.assertRegex(
+            schema,
+            r"ingestion_error\s+text\s+not\s+null\s+default\s+''",
+        )
+
+    def test_schema_adds_ingestion_cursor_columns_to_existing_chats_table(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn(
+            "alter table chats add column if not exists last_ingested_message_id bigint not null default 0",
+            schema,
+        )
+        self.assertIn(
+            "alter table chats add column if not exists last_ingested_at timestamptz",
+            schema,
+        )
+        self.assertIn(
+            "alter table chats add column if not exists ingestion_error text not null default ''",
+            schema,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
