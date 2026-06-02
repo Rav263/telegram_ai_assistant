@@ -12,4 +12,5 @@
 - Added environment config loading and CLI skeleton.
 - Added Postgres schema and repository ports.
 - Added Telegram ingestion normalization and content extractor ports.
+- Added LM Studio client and extraction service.
 - Added local operations runbooks and manual unread smoke test checklist.
