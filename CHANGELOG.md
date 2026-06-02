@@ -20,3 +20,4 @@
 - Added CLI runtime dispatch and offline health command.
 - Added local operations runbooks and manual unread smoke test checklist.
 - Added production wiring base for `.env` loading, Postgres migrations, and online health checks.
+- Added one-shot live Telegram ingestor with chat cursor persistence.

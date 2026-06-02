@@ -27,6 +27,10 @@ TELEGRAM_API_ID=123
 TELEGRAM_API_HASH=your-api-hash
 TELEGRAM_BOT_TOKEN=your-bot-token
 TELEGRAM_ALLOWED_USER_ID=123456
+TELEGRAM_SESSION_PATH=.local/telegram-owner.session
+TELEGRAM_INGEST_ACCOUNT_ID=owner
+TELEGRAM_INGEST_CHAT_ID=123456789
+TELEGRAM_INGEST_LIMIT=100
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
@@ -40,6 +44,18 @@ BACKFILL_DAYS=30
 - `telegram-ai-assistant run worker` processes candidates and extraction batches.
 - `telegram-ai-assistant run bot` serves owner-only Telegram Bot API commands.
 - `telegram-ai-assistant run scheduler` drives retries, backfill, and periodic processing.
+
+## Ingestor
+
+For this release, `telegram-ai-assistant run ingestor` is a one-shot single-chat command for controlled unread smoke testing. It reads only `TELEGRAM_INGEST_CHAT_ID`, uses `last_ingested_message_id` from the `chats` table as the cursor, saves new messages, advances the cursor, and exits.
+
+Run it only against a controlled non-secret chat until the manual unread smoke test passes:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run ingestor
+```
+
+The command prints JSON with `saved_count`, `requested_min_id`, and `latest_message_id`. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
 
 ## Database
 
