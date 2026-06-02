@@ -1,1 +1,11 @@
 .worktrees/
+.venv/
+.env
+*.session
+*.session-journal
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
