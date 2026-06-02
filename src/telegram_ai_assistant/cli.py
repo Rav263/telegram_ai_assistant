@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 import os
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Callable, Mapping
 
 from . import __version__
@@ -49,25 +49,16 @@ def main(
         environment = load_environment(env_file, os.environ if environ is None else environ)
         return run_process(args.process, Settings.from_env(environment))
     if args.command == "health":
-        if not args.offline:
-            raise NotImplementedError("online health checks are not wired yet")
-        report = offline_health_report()
-        print(
-            json.dumps(
-                {
-                    "status": report.status.value,
-                    "components": [
-                        {
-                            "name": component.name,
-                            "status": component.status.value,
-                            "details": dict(component.details or {}),
-                        }
-                        for component in report.components
-                    ],
-                },
-                sort_keys=True,
-            )
-        )
+        if args.offline:
+            report = offline_health_report()
+        else:
+            try:
+                environment = load_environment(env_file, os.environ if environ is None else environ)
+                report = context_factory(environment).online_health_report()
+            except Exception as exc:
+                print(f"health check failed: {type(exc).__name__}")
+                return 1
+        print(json.dumps(_health_report_payload(report), sort_keys=True))
         return 0
     if args.command == "migrate":
         try:
@@ -80,3 +71,17 @@ def main(
         print("migration applied")
         return 0
     raise ValueError(f"unknown command: {args.command}")
+
+
+def _health_report_payload(report):
+    return {
+        "status": report.status.value,
+        "components": [
+            {
+                "name": component.name,
+                "status": component.status.value,
+                "details": dict(component.details or {}),
+            }
+            for component in report.components
+        ],
+    }
