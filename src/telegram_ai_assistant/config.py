@@ -15,8 +15,12 @@ class Settings:
     telegram_bot_token: str
     telegram_allowed_user_id: int
     database_url: str
+    telegram_session_path: str = ""
+    telegram_ingest_account_id: str = ""
+    telegram_ingest_chat_id: int = 0
     lm_studio_base_url: str = "http://127.0.0.1:1234/v1"
     backfill_days: int = 30
+    telegram_ingest_limit: int = 100
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -25,9 +29,15 @@ class Settings:
             telegram_api_hash=_required(env, "TELEGRAM_API_HASH"),
             telegram_bot_token=_required(env, "TELEGRAM_BOT_TOKEN"),
             telegram_allowed_user_id=_required_int(env, "TELEGRAM_ALLOWED_USER_ID"),
+            telegram_session_path=_required(env, "TELEGRAM_SESSION_PATH"),
+            telegram_ingest_account_id=_required(env, "TELEGRAM_INGEST_ACCOUNT_ID"),
+            telegram_ingest_chat_id=_required_int(env, "TELEGRAM_INGEST_CHAT_ID"),
             database_url=_required(env, "DATABASE_URL"),
             lm_studio_base_url=env.get("LM_STUDIO_BASE_URL", cls.lm_studio_base_url),
             backfill_days=_optional_int(env, "BACKFILL_DAYS", cls.backfill_days),
+            telegram_ingest_limit=_optional_int(
+                env, "TELEGRAM_INGEST_LIMIT", cls.telegram_ingest_limit
+            ),
         )
 
 
