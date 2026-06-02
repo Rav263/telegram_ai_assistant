@@ -7,3 +7,4 @@
 - Added a broad semantic candidate filter for implicit tasks, commitments, and waiting states.
 - Added status review policy for high-confidence automatic updates and low-confidence review routing.
 - Added strict validation for LM Studio extraction JSON responses.
+- Added owner-only access control for the summary bot.
