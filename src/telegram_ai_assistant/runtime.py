@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import Callable, Mapping
+from typing import Any
 
+from .app_context import AppContext
 from .config import Settings
 from .health import ComponentHealth, HealthChecker, HealthReport, HealthStatus
+from .ingestion.live import IngestionRunResult
 
 
 PROCESS_NAMES = ("ingestor", "worker", "bot", "scheduler", "all")
@@ -22,7 +27,13 @@ def run_process(
     return process_runners[process_name](settings)
 
 
-def run_ingestor(settings: Settings) -> int:
+def run_ingestor(settings: Settings, *, context_factory=AppContext.from_settings) -> int:
+    try:
+        result = asyncio.run(context_factory(settings).run_ingestor_once())
+    except Exception as exc:
+        print(f"ingestor failed: {type(exc).__name__}")
+        return 1
+    print(json.dumps(_ingestion_result_payload(result), sort_keys=True))
     return 0
 
 
@@ -64,3 +75,13 @@ def offline_health_report() -> HealthReport:
         }
     )
     return checker.check()
+
+
+def _ingestion_result_payload(result: IngestionRunResult) -> dict[str, Any]:
+    return {
+        "account_id": result.account_id,
+        "chat_id": result.chat_id,
+        "requested_min_id": result.requested_min_id,
+        "saved_count": result.saved_count,
+        "latest_message_id": result.latest_message_id,
+    }

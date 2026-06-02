@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 from telegram_ai_assistant.app_context import AppContext
@@ -51,6 +52,33 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(factory.opened, 1)
         self.assertEqual(applied_to, [factory.connection_obj])
 
+    def test_run_ingestor_once_builds_service_with_settings(self):
+        factory = FakeConnectionFactory()
+        captured = {}
+
+        class FakeIngestor:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            async def run_once(self):
+                return "result"
+
+        context = AppContext(
+            settings=make_settings(),
+            connection_factory=factory,
+            ingestor_factory=FakeIngestor,
+            telegram_client_factory=lambda settings: "client-factory",
+        )
+
+        result = asyncio.run(context.run_ingestor_once())
+
+        self.assertEqual(result, "result")
+        self.assertEqual(captured["account_id"], "owner")
+        self.assertEqual(captured["chat_id"], 1001)
+        self.assertEqual(captured["limit"], 100)
+        self.assertIs(captured["connection_factory"], factory)
+        self.assertEqual(captured["client_factory"], "client-factory")
+
 
 def make_settings() -> Settings:
     return Settings(
@@ -59,6 +87,9 @@ def make_settings() -> Settings:
         telegram_bot_token="bot",
         telegram_allowed_user_id=456,
         database_url="postgresql://localhost/db",
+        telegram_session_path=".local/telegram-owner.session",
+        telegram_ingest_account_id="owner",
+        telegram_ingest_chat_id=1001,
     )
 
 

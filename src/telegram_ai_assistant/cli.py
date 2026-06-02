@@ -40,6 +40,7 @@ def main(
     env_file: Path = Path(".env"),
     environ: Mapping[str, str] | None = None,
     context_factory: ContextFactory = AppContext.from_environment,
+    runners: Mapping[str, Callable[[Settings], int]] | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "version":
@@ -47,7 +48,7 @@ def main(
         return 0
     if args.command == "run":
         environment = load_environment(env_file, os.environ if environ is None else environ)
-        return run_process(args.process, Settings.from_env(environment))
+        return run_process(args.process, Settings.from_env(environment), runners=runners)
     if args.command == "health":
         if args.offline:
             report = offline_health_report()
