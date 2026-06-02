@@ -85,3 +85,7 @@ def _health_report_payload(report):
             for component in report.components
         ],
     }
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
