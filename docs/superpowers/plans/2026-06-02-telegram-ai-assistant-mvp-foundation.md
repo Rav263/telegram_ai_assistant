@@ -6,12 +6,14 @@
 
 **Architecture:** Implement a small Python package with pure, dependency-free core modules first. External Telegram, Bot API, Postgres, and LM Studio adapters will be added in later plans on top of these tested interfaces.
 
-**Tech Stack:** Python 3.11+, standard library `dataclasses`, `enum`, `datetime`, `json`, `unittest`, `pyproject.toml` with `src/` layout.
+**Tech Stack:** Python 3.11+, project-local virtual environment in `.venv` created with `uv` when available or `python3 -m venv` + `pip` otherwise, standard library `dataclasses`, `enum`, `datetime`, `json`, `unittest`, `pyproject.toml` with `src/` layout.
 
 ---
 
 ## File Structure
 
+- Create `.gitignore`: ignore `.venv`, secrets, Telegram session files, and local tooling.
+- Create `CHANGELOG.md`: keep a human-readable changelog during implementation.
 - Create `pyproject.toml`: package metadata for the `src/` layout.
 - Create `src/telegram_ai_assistant/__init__.py`: package marker and version.
 - Create `src/telegram_ai_assistant/domain.py`: message, item, status, and source reference dataclasses/enums.
@@ -26,6 +28,75 @@
 - Create `tests/test_llm.py`: LLM JSON validation tests.
 - Create `tests/test_security.py`: bot access tests.
 - Create `tests/test_telegram_readonly.py`: read-only guard tests.
+
+## Task 0: Python Environment And Changelog
+
+**Files:**
+- Create: `.gitignore`
+- Create: `CHANGELOG.md`
+
+- [ ] **Step 1: Create a project-local virtual environment**
+
+Run:
+
+```bash
+if command -v uv >/dev/null 2>&1; then
+  uv venv .venv --python 3.11
+else
+  python3 -m venv .venv
+  .venv/bin/python -m pip install --upgrade pip
+fi
+```
+
+Expected: `.venv/bin/python` exists.
+
+- [ ] **Step 2: Create `.gitignore`**
+
+Create `.gitignore`:
+
+```gitignore
+.venv/
+.env
+*.session
+*.session-journal
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+```
+
+- [ ] **Step 3: Create `CHANGELOG.md`**
+
+Create `CHANGELOG.md`:
+
+```markdown
+# Changelog
+
+## Unreleased
+
+- Added project setup requirements for the MVP foundation.
+```
+
+- [ ] **Step 4: Verify the virtual environment**
+
+Run:
+
+```bash
+.venv/bin/python --version
+```
+
+Expected: Python 3.11 or newer.
+
+- [ ] **Step 5: Commit Task 0**
+
+Run:
+
+```bash
+git add .gitignore CHANGELOG.md
+git commit -m "chore: add Python environment setup"
+```
 
 ## Task 1: Project Scaffold And Domain Types
 
@@ -92,7 +163,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_domain -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_domain -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.domain` does not exist.
@@ -108,6 +179,10 @@ version = "0.1.0"
 description = "Local-first Telegram AI assistant"
 requires-python = ">=3.11"
 dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -196,17 +271,25 @@ class ExtractedItem:
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_domain -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_domain -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 1**
+- [ ] **Step 5: Update changelog for Task 1**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added core domain types for messages, extracted items, statuses, and source references.
+```
+
+- [ ] **Step 6: Commit Task 1**
 
 Run:
 
 ```bash
-git add pyproject.toml src/telegram_ai_assistant/__init__.py src/telegram_ai_assistant/domain.py tests/test_domain.py
+git add CHANGELOG.md pyproject.toml src/telegram_ai_assistant/__init__.py src/telegram_ai_assistant/domain.py tests/test_domain.py
 git commit -m "feat: add core domain types"
 ```
 
@@ -270,7 +353,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_filtering -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_filtering -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.filtering` does not exist.
@@ -342,17 +425,25 @@ def score_message(message: Message) -> CandidateScore:
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_filtering -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_filtering -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 2**
+- [ ] **Step 5: Update changelog for Task 2**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added a broad semantic candidate filter for implicit tasks, commitments, and waiting states.
+```
+
+- [ ] **Step 6: Commit Task 2**
 
 Run:
 
 ```bash
-git add src/telegram_ai_assistant/filtering.py tests/test_filtering.py
+git add CHANGELOG.md src/telegram_ai_assistant/filtering.py tests/test_filtering.py
 git commit -m "feat: add broad candidate filter"
 ```
 
@@ -408,7 +499,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_status -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_status -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.status` does not exist.
@@ -454,17 +545,25 @@ def apply_status_policy(
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_status -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_status -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 3**
+- [ ] **Step 5: Update changelog for Task 3**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added status review policy for high-confidence automatic updates and low-confidence review routing.
+```
+
+- [ ] **Step 6: Commit Task 3**
 
 Run:
 
 ```bash
-git add src/telegram_ai_assistant/status.py tests/test_status.py
+git add CHANGELOG.md src/telegram_ai_assistant/status.py tests/test_status.py
 git commit -m "feat: add status review policy"
 ```
 
@@ -536,7 +635,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_llm -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_llm -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.llm` does not exist.
@@ -640,17 +739,25 @@ def _require_str(raw_item: dict[str, Any], field_name: str) -> str:
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_llm -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_llm -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 4**
+- [ ] **Step 5: Update changelog for Task 4**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added strict validation for LM Studio extraction JSON responses.
+```
+
+- [ ] **Step 6: Commit Task 4**
 
 Run:
 
 ```bash
-git add src/telegram_ai_assistant/llm.py tests/test_llm.py
+git add CHANGELOG.md src/telegram_ai_assistant/llm.py tests/test_llm.py
 git commit -m "feat: validate LLM extraction output"
 ```
 
@@ -691,7 +798,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_security -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_security -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.security` does not exist.
@@ -717,17 +824,25 @@ class BotAccessController:
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_security -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_security -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 5**
+- [ ] **Step 5: Update changelog for Task 5**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added owner-only access control for the summary bot.
+```
+
+- [ ] **Step 6: Commit Task 5**
 
 Run:
 
 ```bash
-git add src/telegram_ai_assistant/security.py tests/test_security.py
+git add CHANGELOG.md src/telegram_ai_assistant/security.py tests/test_security.py
 git commit -m "feat: add owner-only bot access control"
 ```
 
@@ -773,7 +888,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_telegram_readonly -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_telegram_readonly -v
 ```
 
 Expected: FAIL because `telegram_ai_assistant.telegram_readonly` does not exist.
@@ -812,17 +927,25 @@ class ReadOnlyTelegramGuard:
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests.test_telegram_readonly -v
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_telegram_readonly -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 6**
+- [ ] **Step 5: Update changelog for Task 6**
+
+Append to `CHANGELOG.md` under `## Unreleased`:
+
+```markdown
+- Added read-only guard for Telegram methods that could mutate account state.
+```
+
+- [ ] **Step 6: Commit Task 6**
 
 Run:
 
 ```bash
-git add src/telegram_ai_assistant/telegram_readonly.py tests/test_telegram_readonly.py
+git add CHANGELOG.md src/telegram_ai_assistant/telegram_readonly.py tests/test_telegram_readonly.py
 git commit -m "feat: add read-only Telegram guard"
 ```
 
@@ -833,7 +956,7 @@ git commit -m "feat: add read-only Telegram guard"
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 ```
 
 Expected: all tests PASS.
