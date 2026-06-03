@@ -10,10 +10,22 @@ CREATE TABLE IF NOT EXISTS chats (
     chat_id BIGINT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
     chat_type TEXT NOT NULL DEFAULT '',
+    last_ingested_message_id BIGINT NOT NULL DEFAULT 0,
+    last_ingested_at TIMESTAMPTZ,
+    ingestion_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (account_id, chat_id)
 );
+
+ALTER TABLE chats
+    ADD COLUMN IF NOT EXISTS last_ingested_message_id BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE chats
+    ADD COLUMN IF NOT EXISTS last_ingested_at TIMESTAMPTZ;
+
+ALTER TABLE chats
+    ADD COLUMN IF NOT EXISTS ingestion_error TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS messages (
     message_id BIGSERIAL PRIMARY KEY,

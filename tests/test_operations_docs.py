@@ -13,6 +13,8 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("unread badge", text)
         self.assertIn("mark_read", text)
         self.assertIn("send_read_acknowledge", text)
+        self.assertIn("telegram-ai-assistant run ingestor", text)
+        self.assertIn("last_ingested_message_id", text)
         self.assertIn("rollback", text)
 
     def test_local_runbook_mentions_core_services(self):
@@ -22,6 +24,10 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("LM Studio", text)
         self.assertIn(".env", text)
         self.assertIn("telegram-ai-assistant", text)
+        self.assertIn("TELEGRAM_SESSION_PATH", text)
+        self.assertIn("TELEGRAM_INGEST_CHAT_ID", text)
+        self.assertIn("TELEGRAM_INGEST_LIMIT", text)
+        self.assertIn("telegram-ai-assistant run ingestor", text)
 
 
 if __name__ == "__main__":
