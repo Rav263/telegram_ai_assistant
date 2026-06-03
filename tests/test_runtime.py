@@ -1,9 +1,12 @@
 import io
 from contextlib import redirect_stdout
+from datetime import UTC, datetime
+import json
 import unittest
 
 from telegram_ai_assistant.config import Settings
-from telegram_ai_assistant.ingestion.live import IngestionRunResult
+from telegram_ai_assistant.domain import MessageDirection
+from telegram_ai_assistant.ingestion.live import IngestedMessageDebug, IngestionRunResult
 from telegram_ai_assistant.runtime import PROCESS_NAMES, offline_health_report, run_ingestor, run_process
 
 
@@ -55,6 +58,50 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls, ["run"])
         self.assertIn('"saved_count": 2', output.getvalue())
         self.assertIn('"latest_message_id": 202', output.getvalue())
+        self.assertNotIn("debug_messages", output.getvalue())
+
+    def test_run_ingestor_prints_debug_messages_when_result_contains_them(self):
+        class FakeContext:
+            async def run_ingestor_once(self):
+                return IngestionRunResult(
+                    account_id="owner",
+                    chat_id=1001,
+                    requested_min_id=200,
+                    saved_count=1,
+                    latest_message_id=201,
+                    debug_messages=(
+                        IngestedMessageDebug(
+                            telegram_message_id=201,
+                            sender_id=3001,
+                            direction=MessageDirection.INCOMING,
+                            sent_at=datetime(2026, 6, 2, 9, 1, tzinfo=UTC),
+                            text="Не грузи деда",
+                            caption="",
+                        ),
+                    ),
+                )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_ingestor(make_settings(), context_factory=lambda settings: FakeContext())
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            payload["debug_messages"],
+            [
+                {
+                    "telegram_message_id": 201,
+                    "sender_id": 3001,
+                    "direction": "incoming",
+                    "sent_at": "2026-06-02T09:01:00+00:00",
+                    "text": "Не грузи деда",
+                    "caption": "",
+                }
+            ],
+        )
+        self.assertIn("Не грузи деда", output.getvalue())
+        self.assertNotIn("\\u041d", output.getvalue())
 
     def test_run_ingestor_failure_returns_nonzero_without_secret_values(self):
         class FailingContext:

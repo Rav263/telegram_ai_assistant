@@ -33,7 +33,7 @@ def run_ingestor(settings: Settings, *, context_factory=AppContext.from_settings
     except Exception as exc:
         print(f"ingestor failed: {type(exc).__name__}")
         return 1
-    print(json.dumps(_ingestion_result_payload(result), sort_keys=True))
+    print(json.dumps(_ingestion_result_payload(result), ensure_ascii=False, sort_keys=True))
     return 0
 
 
@@ -78,10 +78,23 @@ def offline_health_report() -> HealthReport:
 
 
 def _ingestion_result_payload(result: IngestionRunResult) -> dict[str, Any]:
-    return {
+    payload = {
         "account_id": result.account_id,
         "chat_id": result.chat_id,
         "requested_min_id": result.requested_min_id,
         "saved_count": result.saved_count,
         "latest_message_id": result.latest_message_id,
     }
+    if result.debug_messages:
+        payload["debug_messages"] = [
+            {
+                "telegram_message_id": message.telegram_message_id,
+                "sender_id": message.sender_id,
+                "direction": message.direction.value,
+                "sent_at": message.sent_at.isoformat(),
+                "text": message.text,
+                "caption": message.caption,
+            }
+            for message in result.debug_messages
+        ]
+    return payload

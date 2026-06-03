@@ -31,6 +31,7 @@ TELEGRAM_SESSION_PATH=.local/telegram-owner.session
 TELEGRAM_INGEST_ACCOUNT_ID=owner
 TELEGRAM_INGEST_CHAT_ID=123456789
 TELEGRAM_INGEST_LIMIT=100
+TELEGRAM_INGEST_DEBUG_MESSAGES=false
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
@@ -56,6 +57,8 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run ingestor
 ```
 
 The command prints JSON with `saved_count`, `requested_min_id`, and `latest_message_id`. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
+
+Set `TELEGRAM_INGEST_DEBUG_MESSAGES=true` only for local troubleshooting when you need the command output to include `debug_messages` with saved message IDs, sender IDs, direction, timestamp, text, and caption. Turn it back off after debugging so routine logs do not contain private message text.
 
 ## Database
 

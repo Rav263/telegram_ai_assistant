@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.domain import Message, MessageDirection
-from telegram_ai_assistant.ingestion.live import LiveIngestor
+from telegram_ai_assistant.ingestion.live import IngestedMessageDebug, LiveIngestor
 
 
 class FakeConnectionFactory:
@@ -134,6 +134,40 @@ class LiveIngestorTests(unittest.TestCase):
         self.assertEqual(result.requested_min_id, 200)
         self.assertEqual(result.saved_count, 2)
         self.assertEqual(result.latest_message_id, 202)
+        self.assertEqual(result.debug_messages, ())
+
+    def test_run_once_collects_debug_messages_when_enabled(self):
+        client = FakeIngestionClient(
+            [
+                RawMessage(201, "first unread message"),
+                RawMessage(202, "second unread message"),
+            ]
+        )
+        ingestor, _repositories = make_ingestor(client=client, debug_messages=True)
+
+        result = asyncio.run(ingestor.run_once())
+
+        self.assertEqual(
+            result.debug_messages,
+            (
+                IngestedMessageDebug(
+                    telegram_message_id=201,
+                    sender_id=3001,
+                    direction=MessageDirection.INCOMING,
+                    sent_at=datetime(2026, 6, 2, 9, 1, tzinfo=UTC),
+                    text="first unread message",
+                    caption="",
+                ),
+                IngestedMessageDebug(
+                    telegram_message_id=202,
+                    sender_id=3001,
+                    direction=MessageDirection.INCOMING,
+                    sent_at=datetime(2026, 6, 2, 9, 2, tzinfo=UTC),
+                    text="second unread message",
+                    caption="",
+                ),
+            ),
+        )
 
     def test_run_once_does_not_move_cursor_when_no_messages_are_saved(self):
         client = FakeIngestionClient([])
@@ -168,7 +202,7 @@ class RepositoryBundle:
         self.messages = messages
 
 
-def make_ingestor(client, normalizer=None):
+def make_ingestor(client, normalizer=None, debug_messages=False):
     connection_factory = FakeConnectionFactory()
     repositories = RepositoryBundle(
         account=FakeAccountRepository(connection_factory.connection_obj),
@@ -186,6 +220,7 @@ def make_ingestor(client, normalizer=None):
         "chat_repository_factory": lambda connection: repositories.chat,
         "message_repository_factory": lambda connection: repositories.messages,
         "now": lambda: datetime(2026, 6, 2, 10, 0, tzinfo=UTC),
+        "debug_messages": debug_messages,
     }
     if normalizer is not None:
         kwargs["normalizer"] = normalizer

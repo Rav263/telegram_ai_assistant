@@ -27,6 +27,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_ingest_account_id, "account-1")
         self.assertEqual(settings.telegram_ingest_chat_id, 789)
         self.assertEqual(settings.telegram_ingest_limit, 100)
+        self.assertFalse(settings.telegram_ingest_debug_messages)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.backfill_days, 30)
@@ -37,6 +38,7 @@ class SettingsTests(unittest.TestCase):
             "LM_STUDIO_BASE_URL": "http://lmstudio.local:1234/v1",
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
+            "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
         }
 
         settings = Settings.from_env(env)
@@ -44,6 +46,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.lm_studio_base_url, "http://lmstudio.local:1234/v1")
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
+        self.assertTrue(settings.telegram_ingest_debug_messages)
 
     def test_raises_when_required_setting_is_missing(self):
         env = dict(VALID_ENV)
@@ -86,6 +89,15 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "TELEGRAM_INGEST_LIMIT": "not-an-int",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_ingest_debug_messages_is_not_a_boolean(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_INGEST_DEBUG_MESSAGES": "sometimes",
         }
 
         with self.assertRaises(ConfigError):

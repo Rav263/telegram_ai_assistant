@@ -67,6 +67,7 @@ class AppContext:
             account_id=self.settings.telegram_ingest_account_id,
             chat_id=self.settings.telegram_ingest_chat_id,
             limit=self.settings.telegram_ingest_limit,
+            debug_messages=self.settings.telegram_ingest_debug_messages,
             connection_factory=self.connection_factory,
             client_factory=self.telegram_client_factory(self.settings),
         )
