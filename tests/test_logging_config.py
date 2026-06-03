@@ -8,6 +8,9 @@ from telegram_ai_assistant.logging_config import configure_logging, normalize_lo
 
 
 class LoggingConfigTests(unittest.TestCase):
+    def tearDown(self):
+        logging.basicConfig(level=logging.WARNING, force=True)
+
     def test_normalize_log_level_accepts_case_insensitive_values(self):
         self.assertEqual(normalize_log_level("debug"), "DEBUG")
         self.assertEqual(normalize_log_level("Warning"), "WARNING")

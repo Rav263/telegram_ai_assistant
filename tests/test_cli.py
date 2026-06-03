@@ -1,4 +1,5 @@
 import io
+import logging
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -18,6 +19,9 @@ VALID_ENV = {
 
 
 class CLITests(unittest.TestCase):
+    def tearDown(self):
+        logging.basicConfig(level=logging.WARNING, force=True)
+
     def test_parses_version_command(self):
         args = build_parser().parse_args(["version"])
 
