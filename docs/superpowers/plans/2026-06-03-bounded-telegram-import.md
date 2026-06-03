@@ -84,6 +84,7 @@ Add tests for:
 
 - cursor `0` with `recent` calls `iter_recent_messages` with `now - bootstrap_days`;
 - cursor `0` with `start_now` calls `get_latest_message_id`, saves nothing, and updates cursor;
+- cursor `200` with `start_now` still calls `get_latest_message_id`, saves nothing, and advances the cursor instead of reading backlog;
 - cursor `200` ignores bootstrap and calls `iter_new_messages(min_id=200)`;
 - result includes `bootstrap_mode`, `oldest_sent_at`, and `newest_sent_at`.
 

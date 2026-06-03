@@ -193,16 +193,22 @@ class LiveIngestorTests(unittest.TestCase):
         self.assertIsNone(result.oldest_sent_at)
         self.assertIsNone(result.newest_sent_at)
 
-    def test_run_once_uses_cursor_ingestion_when_cursor_exists_even_with_start_now_mode(self):
+    def test_run_once_start_now_overrides_existing_cursor_without_reading_backlog(self):
         client = FakeIngestionClient([RawMessage(201, "new message")], latest_message_id=999)
-        ingestor, _repositories = make_ingestor(client=client, cursor=200, bootstrap_mode="start_now")
+        ingestor, repositories = make_ingestor(client=client, cursor=200, bootstrap_mode="start_now")
 
         result = asyncio.run(ingestor.run_once())
 
-        self.assertEqual(client.calls, [("iter_new_messages", 1001, 200, 10), ("close",)])
+        self.assertEqual(client.calls, [("get_latest_message_id", 1001), ("close",)])
+        self.assertEqual(repositories.messages.messages, [])
+        self.assertEqual(
+            repositories.chat.updated_cursor,
+            ("owner", 1001, 999, datetime(2026, 6, 2, 10, 0, tzinfo=UTC)),
+        )
         self.assertEqual(result.requested_min_id, 200)
-        self.assertEqual(result.saved_count, 1)
-        self.assertEqual(result.bootstrap_mode, "cursor")
+        self.assertEqual(result.saved_count, 0)
+        self.assertEqual(result.latest_message_id, 999)
+        self.assertEqual(result.bootstrap_mode, "start_now")
 
     def test_run_once_collects_debug_messages_when_enabled(self):
         client = FakeIngestionClient(

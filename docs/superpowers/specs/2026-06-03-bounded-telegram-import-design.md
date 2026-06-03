@@ -13,7 +13,7 @@ Make live Telegram ingestion safe by default: first runs import only a bounded r
 - Add an initial bootstrap mode used only when the chat cursor is empty.
 - Default bootstrap mode is `recent`, importing messages newer than `now - TELEGRAM_INGEST_BOOTSTRAP_DAYS`.
 - Default bootstrap window is 30 days.
-- Add `start_now` bootstrap mode for controlled smoke tests. It sets the cursor to the current latest message id and saves no messages.
+- Add `start_now` mode for controlled smoke tests and backlog skipping. It sets the cursor to the current latest message id and saves no messages, even if the chat already has an older cursor.
 - Keep old-history import outside live ingestion. Older ranges remain a backfill concern.
 - Keep the Telegram account read-only; new client operations must remain retrieval-only.
 - Extend result JSON with optional date bounds so debug output shows the imported period without requiring message text.
@@ -25,13 +25,13 @@ Add optional settings:
 - `TELEGRAM_INGEST_BOOTSTRAP_MODE`: `recent`, `start_now`, or `cursor`; default `recent`.
 - `TELEGRAM_INGEST_BOOTSTRAP_DAYS`: positive integer; default `30`.
 
-Mode behavior when `last_ingested_message_id == 0`:
+Mode behavior:
 
 - `recent`: call the read-only client for messages newer than `now - bootstrap_days`, up to `TELEGRAM_INGEST_LIMIT`, in oldest-to-newest order.
-- `start_now`: read the latest message id only, update the cursor to that id, save no messages, and exit successfully.
+- `start_now`: read the latest message id only, update the cursor to that id, save no messages, and exit successfully. This mode is explicit override behavior and applies even when the cursor is non-zero.
 - `cursor`: keep the previous behavior for explicit troubleshooting: call new-message ingestion with `min_id=0`.
 
-When the cursor is non-zero, all modes use regular cursor ingestion.
+When the cursor is non-zero, `recent` and `cursor` use regular cursor ingestion.
 
 ## Client Port
 
@@ -53,17 +53,18 @@ These calls are non-mutating and remain behind `ReadOnlyTelegramGuard`.
 2. Ensure account and chat rows exist.
 3. Read the chat cursor.
 4. Open the read-only Telegram client.
-5. If cursor is empty, select bootstrap behavior:
-   - `recent`: iterate recent messages since the cutoff.
+5. Select ingestion behavior:
    - `start_now`: fetch latest id and update cursor without saving messages.
+6. If cursor is empty, select bootstrap behavior:
+   - `recent`: iterate recent messages since the cutoff.
    - `cursor`: iterate new messages with `min_id=0`.
-6. If cursor is non-empty, iterate new messages with `min_id=cursor`.
-7. Normalize and upsert each message.
-8. Track saved count, latest message id, oldest timestamp, and newest timestamp.
-9. Update the cursor only after the selected operation succeeds.
-10. Close the Telegram client.
+7. If cursor is non-empty, iterate new messages with `min_id=cursor`.
+8. Normalize and upsert each message.
+9. Track saved count, latest message id, oldest timestamp, and newest timestamp.
+10. Update the cursor only after the selected operation succeeds.
+11. Close the Telegram client.
 
-For `recent`, if no messages are found, the cursor stays unchanged because there is no reliable latest id from the recent iterator. Operators can use `start_now` when they want to mark an empty baseline explicitly.
+For `recent`, if no messages are found, the cursor stays unchanged because there is no reliable latest id from the recent iterator. Operators can use `start_now` when they want to mark a baseline explicitly or skip an already discovered backlog.
 
 ## Runtime Output
 
@@ -101,7 +102,7 @@ Required tests:
 - port tests for `iter_recent_messages` and `get_latest_message_id`;
 - app context test proving bootstrap settings are passed into `LiveIngestor`;
 - live ingestor test for recent bootstrap using a cutoff date;
-- live ingestor test for `start_now` updating cursor without saving messages;
+- live ingestor test for `start_now` updating cursor without saving messages from empty and non-empty cursors;
 - live ingestor test proving non-zero cursor ignores bootstrap and uses normal cursor ingestion;
 - runtime payload test for `bootstrap_mode`, `oldest_sent_at`, and `newest_sent_at`;
 - docs tests updated for the new environment variables.

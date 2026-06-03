@@ -52,13 +52,13 @@ BACKFILL_DAYS=30
 
 For this release, `telegram-ai-assistant run ingestor` is a one-shot single-chat command for controlled unread smoke testing. It reads only `TELEGRAM_INGEST_CHAT_ID`, uses `last_ingested_message_id` from the `chats` table as the cursor, saves new messages, advances the cursor, and exits.
 
-When the chat cursor is empty, `TELEGRAM_INGEST_BOOTSTRAP_MODE` controls the first run:
+`TELEGRAM_INGEST_BOOTSTRAP_MODE` controls how the command behaves around existing history:
 
 - `recent` imports only messages newer than `TELEGRAM_INGEST_BOOTSTRAP_DAYS` days ago, defaulting to 30 days.
-- `start_now` moves the cursor to the current latest message without saving old messages.
+- `start_now` moves the cursor to the current latest message without saving old messages. Use it to skip backlog even if the chat already has an older cursor.
 - `cursor` preserves raw cursor behavior and starts from message id `0`.
 
-After the cursor is non-empty, every mode reads only messages newer than `last_ingested_message_id`.
+After the cursor is non-empty, `recent` and `cursor` read only messages newer than `last_ingested_message_id`.
 
 Run it only against a controlled non-secret chat until the manual unread smoke test passes:
 

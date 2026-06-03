@@ -85,9 +85,9 @@ class LiveIngestor:
             newest_sent_at: datetime | None = None
             debug_messages: list[IngestedMessageDebug] = []
             try:
-                if requested_min_id == 0 and self.bootstrap_mode == "start_now":
+                if self.bootstrap_mode == "start_now":
                     effective_bootstrap_mode = "start_now"
-                    latest_message_id = await client.get_latest_message_id(self.chat_id)
+                    latest_message_id = max(requested_min_id, await client.get_latest_message_id(self.chat_id))
                     if latest_message_id:
                         chat_repository.update_ingestion_cursor(
                             self.account_id,
