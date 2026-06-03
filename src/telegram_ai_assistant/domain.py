@@ -68,6 +68,17 @@ class ExtractedItem:
 
 
 @dataclass(frozen=True)
+class ReviewEntry:
+    review_id: int
+    review_type: str
+    state: str
+    reason: str
+    payload: dict[str, object]
+    created_at: datetime
+    item: ExtractedItem | None = None
+
+
+@dataclass(frozen=True)
 class RuntimeEvent:
     runtime_event_id: int
     component: str

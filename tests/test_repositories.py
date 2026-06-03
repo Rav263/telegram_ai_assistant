@@ -21,6 +21,7 @@ from telegram_ai_assistant.domain import (
     ItemType,
     Message,
     MessageDirection,
+    ReviewEntry,
     RuntimeEvent,
     SourceRef,
 )
@@ -534,6 +535,65 @@ class ItemQueryRepositoryTests(unittest.TestCase):
 
 
 class ReviewRepositoryTests(unittest.TestCase):
+    def test_list_pending_reviews_reads_item_and_payload_data(self):
+        connection = RecordingConnection()
+        created_at = datetime(2026, 6, 3, 8, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchall_result = [
+            {
+                "review_id": 7,
+                "review_type": "item",
+                "state": "pending",
+                "reason": "Low confidence.",
+                "payload": {"confidence": 0.5},
+                "created_at": created_at,
+                "item_id": "item-1",
+                "item_type": "task",
+                "title": "Send report",
+                "description": "Prepare report",
+                "confidence": 0.5,
+                "status": "candidate",
+                "rationale": "Maybe a task.",
+                "due_at": None,
+                "source_refs": [],
+                "metadata": {},
+            }
+        ]
+
+        entries = ReviewRepository(connection, account_id="main").list_pending_reviews(limit=5)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from review_queue", normalized_sql)
+        self.assertIn("left join extracted_items", normalized_sql)
+        self.assertIn("r.state = 'pending'", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 5)
+        self.assertEqual(
+            entries,
+            [
+                ReviewEntry(
+                    review_id=7,
+                    review_type="item",
+                    state="pending",
+                    reason="Low confidence.",
+                    payload={"confidence": 0.5},
+                    created_at=created_at,
+                    item=ExtractedItem(
+                        item_id="item-1",
+                        item_type=ItemType.TASK,
+                        title="Send report",
+                        description="Prepare report",
+                        confidence=0.5,
+                        status=ItemStatus.CANDIDATE,
+                        rationale="Maybe a task.",
+                        due_at=None,
+                        sources=(),
+                        metadata={},
+                    ),
+                )
+            ],
+        )
+
     def test_enqueue_item_saves_candidate_item_and_review_entry(self):
         connection = RecordingConnection()
         item = make_item(confidence=0.42)
@@ -571,6 +631,59 @@ class ReviewRepositoryTests(unittest.TestCase):
             json.loads(params["payload"])["new_status"],
             "partially_completed",
         )
+
+    def test_approve_item_review_activates_item_and_marks_review_approved(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = {
+            "review_id": 7,
+            "review_type": "item",
+            "item_id": "item-1",
+            "payload": {},
+            "reason": "Looks useful.",
+        }
+
+        result = ReviewRepository(connection, account_id="main").approve_review(7)
+
+        statements = [compact_sql(sql).lower() for sql, _ in connection.statements]
+        self.assertEqual(result, "Review approved.")
+        self.assertIn("select", statements[0])
+        self.assertIn("from review_queue", statements[0])
+        self.assertIn("update extracted_items", statements[1])
+        self.assertIn("update review_queue", statements[2])
+        self.assertEqual(connection.statements[1][1]["status"], "open")
+        self.assertEqual(connection.statements[2][1]["state"], "approved")
+
+    def test_approve_status_change_review_applies_payload_status_and_marks_approved(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = {
+            "review_id": 8,
+            "review_type": "status_change",
+            "item_id": "item-1",
+            "payload": {"item_id": "item-1", "new_status": "completed", "rationale": "Owner said done."},
+            "reason": "Owner said done.",
+        }
+
+        result = ReviewRepository(connection, account_id="main").approve_review(8)
+
+        statements = [compact_sql(sql).lower() for sql, _ in connection.statements]
+        self.assertEqual(result, "Review approved.")
+        self.assertIn("update extracted_items", statements[1])
+        self.assertIn("insert into item_status_events", statements[2])
+        self.assertIn("update review_queue", statements[3])
+        self.assertEqual(connection.statements[1][1]["new_status"], "completed")
+        self.assertEqual(connection.statements[3][1]["state"], "approved")
+
+    def test_reject_review_marks_review_rejected_without_item_update(self):
+        connection = RecordingConnection()
+
+        result = ReviewRepository(connection, account_id="main").reject_review(9)
+
+        self.assertEqual(result, "Review rejected.")
+        self.assertEqual(len(connection.statements), 1)
+        sql, params = connection.statements[0]
+        self.assertIn("update review_queue", compact_sql(sql).lower())
+        self.assertEqual(params["review_id"], 9)
+        self.assertEqual(params["state"], "rejected")
 
 
 class RuntimeEventRepositoryTests(unittest.TestCase):

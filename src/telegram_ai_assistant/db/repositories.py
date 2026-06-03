@@ -12,6 +12,7 @@ from telegram_ai_assistant.domain import (
     ItemType,
     Message,
     MessageDirection,
+    ReviewEntry,
     RuntimeEvent,
     SourceRef,
 )
@@ -112,6 +113,36 @@ def _item_from_row(row: object) -> ExtractedItem:
         due_at=_row_value(row, "due_at", 7),
         sources=_source_refs_from_json(_row_value(row, "source_refs", 8)),
         metadata={str(key): str(value) for key, value in _json_object(_row_value(row, "metadata", 9)).items()},
+    )
+
+
+def _review_entry_from_row(row: object) -> ReviewEntry:
+    return ReviewEntry(
+        review_id=int(_row_value(row, "review_id", 0)),
+        review_type=str(_row_value(row, "review_type", 1)),
+        state=str(_row_value(row, "state", 2)),
+        reason=str(_row_value(row, "reason", 3) or ""),
+        payload=_json_object(_row_value(row, "payload", 4)),
+        created_at=_row_value(row, "created_at", 5),
+        item=_review_item_from_row(row),
+    )
+
+
+def _review_item_from_row(row: object) -> ExtractedItem | None:
+    item_id = _row_value(row, "item_id", 6)
+    if item_id is None:
+        return None
+    return ExtractedItem(
+        item_id=str(item_id),
+        item_type=ItemType(str(_row_value(row, "item_type", 7))),
+        title=str(_row_value(row, "title", 8)),
+        description=str(_row_value(row, "description", 9) or ""),
+        confidence=float(_row_value(row, "confidence", 10)),
+        status=ItemStatus(str(_row_value(row, "status", 11))),
+        rationale=str(_row_value(row, "rationale", 12) or ""),
+        due_at=_row_value(row, "due_at", 13),
+        sources=_source_refs_from_json(_row_value(row, "source_refs", 14)),
+        metadata={str(key): str(value) for key, value in _json_object(_row_value(row, "metadata", 15)).items()},
     )
 
 
@@ -755,6 +786,40 @@ class ReviewRepository:
         self._connection = connection
         self._account_id = account_id
 
+    def list_pending_reviews(self, *, limit: int = 5) -> list[ReviewEntry]:
+        sql = """
+            SELECT
+                r.review_id,
+                r.review_type,
+                r.state,
+                r.reason,
+                r.payload,
+                r.created_at,
+                i.item_id,
+                i.item_type,
+                i.title,
+                i.description,
+                i.confidence,
+                i.status,
+                i.rationale,
+                i.due_at,
+                i.source_refs,
+                i.metadata
+            FROM review_queue r
+            LEFT JOIN extracted_items i
+              ON i.item_id = r.item_id
+             AND i.account_id = %(account_id)s
+            WHERE r.state = 'pending'
+              AND (r.item_id IS NULL OR i.account_id = %(account_id)s)
+            ORDER BY r.created_at ASC, r.review_id ASC
+            LIMIT %(limit)s
+        """
+        params = {
+            "account_id": self._account_id,
+            "limit": limit,
+        }
+        return [_review_entry_from_row(row) for row in _fetchall(self._connection, sql, params)]
+
     def enqueue_item(self, item: ExtractedItem) -> None:
         _upsert_item(
             self._connection,
@@ -817,6 +882,133 @@ class ReviewRepository:
             "payload": _json_dumps(dict(change)),
         }
         _execute(self._connection, sql, params)
+
+    def approve_review(self, review_id: int) -> str:
+        review = self._get_pending_review_for_update(review_id)
+        if review is None:
+            return "Review is no longer pending."
+
+        review_type = str(_row_value(review, "review_type", 1))
+        if review_type == "item":
+            self._activate_review_item(str(_row_value(review, "item_id", 2)))
+        elif review_type == "status_change":
+            self._apply_review_status_change(review)
+        else:
+            return "Unknown review type."
+
+        self._resolve_review(review_id, "approved")
+        return "Review approved."
+
+    def reject_review(self, review_id: int) -> str:
+        self._resolve_review(review_id, "rejected")
+        return "Review rejected."
+
+    def _get_pending_review_for_update(self, review_id: int) -> object | None:
+        sql = """
+            SELECT
+                r.review_id,
+                r.review_type,
+                r.item_id,
+                r.payload,
+                r.reason
+            FROM review_queue r
+            LEFT JOIN extracted_items i
+              ON i.item_id = r.item_id
+             AND i.account_id = %(account_id)s
+            WHERE r.review_id = %(review_id)s
+              AND r.state = 'pending'
+              AND (r.item_id IS NULL OR i.account_id = %(account_id)s)
+            FOR UPDATE
+        """
+        return _fetchone(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "review_id": review_id,
+            },
+        )
+
+    def _activate_review_item(self, item_id: str) -> None:
+        sql = """
+            UPDATE extracted_items
+            SET
+                status = %(status)s,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND item_id = %(item_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "item_id": item_id,
+                "status": ItemStatus.OPEN.value,
+            },
+        )
+
+    def _apply_review_status_change(self, review: object) -> None:
+        payload = _json_object(_row_value(review, "payload", 3))
+        item_id = str(payload.get("item_id", _row_value(review, "item_id", 2)))
+        new_status = _status_value(payload.get("new_status", payload.get("status")))
+        reason = str(payload.get("rationale", payload.get("reason", _row_value(review, "reason", 4) or "")))
+        update_sql = """
+            UPDATE extracted_items
+            SET
+                status = %(new_status)s,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND item_id = %(item_id)s
+        """
+        params = {
+            "account_id": self._account_id,
+            "item_id": item_id,
+            "new_status": new_status,
+        }
+        _execute(self._connection, update_sql, params)
+
+        event_sql = """
+            INSERT INTO item_status_events (
+                item_id,
+                old_status,
+                new_status,
+                reason
+            )
+            VALUES (
+                %(item_id)s,
+                NULL,
+                %(new_status)s,
+                %(reason)s
+            )
+        """
+        _execute(
+            self._connection,
+            event_sql,
+            {
+                "item_id": item_id,
+                "new_status": new_status,
+                "reason": reason,
+            },
+        )
+
+    def _resolve_review(self, review_id: int, state: str) -> None:
+        sql = """
+            UPDATE review_queue
+            SET
+                state = %(state)s,
+                resolved_at = NOW()
+            WHERE review_id = %(review_id)s
+              AND state = 'pending'
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "review_id": review_id,
+                "state": state,
+            },
+        )
 
 
 class RuntimeEventRepository:
