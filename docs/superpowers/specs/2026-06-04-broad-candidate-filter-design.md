@@ -111,6 +111,7 @@ Task intent markers can match alone because user preference is recall-first, so 
 Weak examples should remain low, and clearly empty chatter should remain zero:
 
 - `Нужно понимать контекст` can be a low-score candidate, but it should not get `errand_action`, `logistics_context`, or `private_chat_priority` unless those signals are actually present.
+- Weak intent phrases such as `надо бы подумать` should not be double-counted as both `task_intent` and `self_note`.
 - `Привет` remains `0.0`.
 - Group chatter with only weak abstract wording should not get private priority.
 

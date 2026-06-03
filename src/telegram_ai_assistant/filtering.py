@@ -42,7 +42,7 @@ COMMITMENT_RE = re.compile(
 )
 IMPLIED_REQUEST_RE = re.compile(r"\b(скопируйте|скопировать|заберите|передайте|если там|важное)\b", re.IGNORECASE)
 WAITING_RE = re.compile(r"\b(жду|ожидаю|дождаться|пока от них|когда пришлют)\b", re.IGNORECASE)
-SELF_NOTE_RE = re.compile(r"\b(надо бы|нужно будет|не забыть|идея|мысль|заметка)\b", re.IGNORECASE)
+SELF_NOTE_RE = re.compile(r"\b(идея|мысль|заметка)\b", re.IGNORECASE)
 TASK_INTENT_RE = re.compile(r"\b(нужно|надо|не забыть|стоит|нужно бы|надо бы|нужно будет)\b", re.IGNORECASE)
 ERRAND_ACTION_RE = re.compile(
     r"\b(заехать|забрать|купить|оплатить|позвонить|написать|проверить|проверь|"

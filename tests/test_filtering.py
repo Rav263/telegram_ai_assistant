@@ -71,6 +71,18 @@ class CandidateFilterTests(unittest.TestCase):
         self.assertNotIn(CandidateReason.LOGISTICS_CONTEXT, result.reasons)
         self.assertNotIn(CandidateReason.PRIVATE_CHAT_PRIORITY, result.reasons)
 
+    def test_overlapping_weak_intent_phrase_is_not_double_counted(self):
+        result = score_message(
+            make_message("надо бы подумать"),
+            CandidateScoringContext(chat_type="supergroup"),
+        )
+
+        self.assertGreater(result.score, 0.0)
+        self.assertLess(result.score, 0.6)
+        self.assertIn(CandidateReason.TASK_INTENT, result.reasons)
+        self.assertNotIn(CandidateReason.SELF_NOTE, result.reasons)
+        self.assertNotIn(CandidateReason.ERRAND_ACTION, result.reasons)
+
     def test_time_expression_without_action_does_not_create_candidate(self):
         result = score_message(
             make_message("Сегодня хорошая погода"),

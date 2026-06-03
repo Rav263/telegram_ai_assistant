@@ -73,6 +73,18 @@ from telegram_ai_assistant.filtering import CandidateScoringContext
 
         self.assertEqual(result.score, 0.0)
         self.assertEqual(result.reasons, ())
+
+    def test_overlapping_weak_intent_phrase_is_not_double_counted(self):
+        result = score_message(
+            make_message("надо бы подумать"),
+            CandidateScoringContext(chat_type="supergroup"),
+        )
+
+        self.assertGreater(result.score, 0.0)
+        self.assertLess(result.score, 0.6)
+        self.assertIn(CandidateReason.TASK_INTENT, result.reasons)
+        self.assertNotIn(CandidateReason.SELF_NOTE, result.reasons)
+        self.assertNotIn(CandidateReason.ERRAND_ACTION, result.reasons)
 ```
 
 - [ ] **Step 2: Run filter tests and verify RED**
@@ -95,6 +107,7 @@ In `src/telegram_ai_assistant/filtering.py`:
 - Change `score_message` to accept optional context.
 - Add private-chat priority only when `context.chat_type == "private"` and the message already has at least one non-time content reason.
 - Treat `time_expression` as a modifier: it should strengthen task-like messages, but a standalone casual time mention should remain `0.0`.
+- Keep weak intent and self-note patterns de-overlapped so phrases like `надо бы подумать` do not receive both weights.
 
 The intended scoring constants are:
 
