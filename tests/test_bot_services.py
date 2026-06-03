@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.bot_services import BotServices
-from telegram_ai_assistant.domain import ExtractedItem, ItemStatus, ItemType, RuntimeEvent, SourceRef
+from telegram_ai_assistant.domain import ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent, SourceRef
 from telegram_ai_assistant.health import ComponentHealth, HealthReport, HealthStatus
 
 
@@ -42,6 +42,24 @@ class FakeItemRepository:
 
     def apply_status_change(self, change):
         self.status_changes.append(change)
+
+
+class FakeReviewRepository:
+    def __init__(self, entries=()):
+        self.entries = list(entries)
+        self.calls = []
+
+    def list_pending_reviews(self, *, limit):
+        self.calls.append(("list_pending_reviews", limit))
+        return self.entries[:limit]
+
+    def approve_review(self, review_id):
+        self.calls.append(("approve_review", review_id))
+        return "Review approved."
+
+    def reject_review(self, review_id):
+        self.calls.append(("reject_review", review_id))
+        return "Review rejected."
 
 
 def make_task(
@@ -172,7 +190,7 @@ class BotServicesTests(unittest.TestCase):
     def test_unimplemented_commands_return_stable_message(self):
         services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
 
-        self.assertEqual(services.review(), "Command /review is not implemented yet.")
+        self.assertEqual(services.backfill(), "Command /backfill is not implemented yet.")
 
     def test_summary_groups_items_and_includes_navigation_buttons(self):
         query = FakeSummaryQueryRepository(
@@ -311,6 +329,61 @@ class BotServicesTests(unittest.TestCase):
 
         self.assertEqual(response.text, "No open tasks.")
         self.assertIsNone(response.reply_markup)
+
+    def test_review_lists_pending_entries_with_action_buttons(self):
+        entry = ReviewEntry(
+            review_id=7,
+            review_type="item",
+            state="pending",
+            reason="Low confidence.",
+            payload={"confidence": 0.5},
+            created_at=datetime(2026, 6, 3, 8, 0, tzinfo=UTC),
+            item=make_task(item_id="item-1", title="Send report", status=ItemStatus.CANDIDATE),
+        )
+        repository = FakeReviewRepository([entry])
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            review_repository=repository,
+        )
+
+        response = services.review()
+
+        self.assertEqual(repository.calls, [("list_pending_reviews", 5)])
+        self.assertIn("Pending reviews:", response.text)
+        self.assertIn("#7 item", response.text)
+        self.assertIn("Send report", response.text)
+        self.assertEqual(
+            response.reply_markup["inline_keyboard"][0],
+            [
+                {"text": "Approve 1", "callback_data": "review:approve:7"},
+                {"text": "Reject 1", "callback_data": "review:reject:7"},
+            ],
+        )
+
+    def test_review_returns_empty_message_when_no_entries_exist(self):
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            review_repository=FakeReviewRepository(),
+        )
+
+        response = services.review()
+
+        self.assertEqual(response.text, "No pending reviews.")
+        self.assertIsNotNone(response.reply_markup)
+
+    def test_review_callback_dispatches_approve_and_reject(self):
+        repository = FakeReviewRepository()
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            review_repository=repository,
+        )
+
+        approve = services.handle_review_callback("approve", "7")
+        reject = services.handle_review_callback("reject", "8")
+
+        self.assertEqual(approve, "Review approved.")
+        self.assertEqual(reject, "Review rejected.")
+        self.assertEqual(repository.calls, [("approve_review", 7), ("reject_review", 8)])
 
     def test_status_callback_applies_allowed_status_change(self):
         items = FakeItemRepository()

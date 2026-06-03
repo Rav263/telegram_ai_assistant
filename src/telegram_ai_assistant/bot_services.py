@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .domain import ExtractedItem, ItemStatus, ItemType, RuntimeEvent
+from .domain import ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
 from .health import HealthReport
 
 
@@ -54,12 +54,14 @@ class BotServices:
         item_query_repository: Any | None = None,
         item_repository: Any | None = None,
         summary_query_repository: Any | None = None,
+        review_repository: Any | None = None,
     ):
         self.runtime_event_repository = runtime_event_repository
         self.health_report_provider = health_report_provider
         self.item_query_repository = item_query_repository
         self.item_repository = item_repository
         self.summary_query_repository = summary_query_repository
+        self.review_repository = review_repository
 
     def logs(self) -> str:
         events = self.runtime_event_repository.latest_events(limit=10)
@@ -102,8 +104,13 @@ class BotServices:
             reply_markup=_tasks_reply_markup(items),
         )
 
-    def review(self) -> str:
-        return "Command /review is not implemented yet."
+    def review(self) -> BotResponse:
+        if self.review_repository is None:
+            return BotResponse("Review service is not configured.", _main_menu_markup())
+        entries = self.review_repository.list_pending_reviews(limit=5)
+        if not entries:
+            return BotResponse("No pending reviews.", _review_empty_markup())
+        return BotResponse(_format_review_entries(entries), _review_reply_markup(entries))
 
     def backfill(self) -> str:
         return "Command /backfill is not implemented yet."
@@ -114,8 +121,18 @@ class BotServices:
     def settings(self) -> str:
         return "Command /settings is not implemented yet."
 
-    def handle_review_callback(self, action: str, target_id: str) -> None:
-        return None
+    def handle_review_callback(self, action: str, target_id: str) -> str:
+        if self.review_repository is None:
+            return "Review service is not configured."
+        try:
+            review_id = int(target_id)
+        except ValueError:
+            return "Invalid review id."
+        if action == "approve":
+            return str(self.review_repository.approve_review(review_id))
+        if action == "reject":
+            return str(self.review_repository.reject_review(review_id))
+        return "Unknown review action."
 
     def handle_status_callback(self, action: str, target_id: str) -> str:
         status = ALLOWED_STATUS_CALLBACKS.get(action)
@@ -253,6 +270,56 @@ def _summary_markup() -> dict[str, object]:
             ],
         ]
     }
+
+
+def _format_review_entries(entries: list[ReviewEntry]) -> str:
+    lines = ["Pending reviews:"]
+    for index, entry in enumerate(entries, start=1):
+        item_text = _review_entry_item_text(entry)
+        confidence = _review_confidence(entry)
+        confidence_text = f" confidence={confidence}" if confidence else ""
+        reason = f" reason={entry.reason}" if entry.reason else ""
+        lines.append(f"{index}. #{entry.review_id} {entry.review_type}{confidence_text}: {item_text}{reason}")
+    return "\n".join(lines)
+
+
+def _review_entry_item_text(entry: ReviewEntry) -> str:
+    if entry.item is not None:
+        return entry.item.title
+    item_id = entry.payload.get("item_id")
+    new_status = entry.payload.get("new_status", entry.payload.get("status"))
+    if item_id and new_status:
+        return f"{item_id} -> {new_status}"
+    return "Status change"
+
+
+def _review_confidence(entry: ReviewEntry) -> str:
+    confidence = entry.payload.get("confidence")
+    if confidence is None and entry.item is not None:
+        confidence = entry.item.confidence
+    if confidence is None:
+        return ""
+    try:
+        return f"{float(confidence):.2f}"
+    except (TypeError, ValueError):
+        return str(confidence)
+
+
+def _review_reply_markup(entries: list[ReviewEntry]) -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": f"Approve {index}", "callback_data": f"review:approve:{entry.review_id}"},
+                {"text": f"Reject {index}", "callback_data": f"review:reject:{entry.review_id}"},
+            ]
+            for index, entry in enumerate(entries, start=1)
+        ]
+        + [[{"text": "Menu", "callback_data": "menu:help:0"}]]
+    }
+
+
+def _review_empty_markup() -> dict[str, object]:
+    return {"inline_keyboard": [[{"text": "Menu", "callback_data": "menu:help:0"}]]}
 
 
 def _format_tasks(items: list[ExtractedItem]) -> str:
