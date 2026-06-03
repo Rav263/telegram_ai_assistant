@@ -55,6 +55,10 @@ class FakeBotServices:
         self.calls.append(("health",))
         return "health response"
 
+    def logs(self) -> str:
+        self.calls.append(("logs",))
+        return "logs response"
+
     def handle_review_callback(self, action: str, item_id: str) -> str:
         self.calls.append(("review_callback", action, item_id))
         return "review callback response"
@@ -103,6 +107,7 @@ class BotRouterTests(unittest.TestCase):
             "/blacklist": ("blacklist",),
             "/settings": ("settings",),
             "/health": ("health",),
+            "/logs": ("logs",),
         }
 
         for command, expected_call in command_to_call.items():

@@ -14,6 +14,7 @@ COMMANDS = {
     "/blacklist": "blacklist",
     "/settings": "settings",
     "/health": "health",
+    "/logs": "logs",
 }
 
 
