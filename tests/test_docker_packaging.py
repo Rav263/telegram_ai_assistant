@@ -24,6 +24,13 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("telegram-sessions", compose)
         self.assertIn("TELEGRAM_SESSION_PATH", compose)
         self.assertIn("/var/lib/telegram-ai-assistant/sessions", compose)
+        self.assertIn("type: bind", compose)
+        self.assertIn(
+            "source: ${TELEGRAM_DATA_DIR:-${HOME}/.telegram/telegram_ai_assistant}/postgres",
+            compose,
+        )
+        self.assertIn("target: /var/lib/postgresql/data", compose)
+        self.assertNotIn("postgres-data:", compose)
         self.assertIn("env_file:", compose)
         self.assertIn("required: false", compose)
 

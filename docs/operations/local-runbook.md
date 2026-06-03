@@ -43,6 +43,7 @@ TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
+TELEGRAM_DATA_DIR=${HOME}/.telegram/telegram_ai_assistant
 WORKER_BATCH_SIZE=25
 WORKER_POLL_INTERVAL_SECONDS=10
 WORKER_ITEM_AUTO_APPLY_THRESHOLD=0.8
@@ -173,6 +174,21 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli health
 ```
 
 ## Docker
+
+Docker stores Postgres data in a host bind mount, not in a Docker-managed anonymous database location. The default path is `~/.telegram/telegram_ai_assistant/postgres`. Override it with `TELEGRAM_DATA_DIR` when needed:
+
+```bash
+export TELEGRAM_DATA_DIR="${HOME}/.telegram/telegram_ai_assistant"
+mkdir -p "${TELEGRAM_DATA_DIR}/postgres"
+```
+
+Do not run `docker compose down -v` for this project. Also avoid `docker volume prune` unless you have checked what it will remove. For normal restarts and deploys, use `docker compose up -d --build ...` or `docker compose restart ...`.
+
+Before changing storage or upgrading Postgres, create a logical backup:
+
+```bash
+docker compose exec -T postgres pg_dump -U telegram_ai_assistant -d telegram_ai_assistant > "${HOME}/.telegram/telegram_ai_assistant/backups/telegram_ai_$(date +%F_%H%M).sql"
+```
 
 Build and start the production listener and worker stack:
 
