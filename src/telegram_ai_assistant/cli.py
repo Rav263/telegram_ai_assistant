@@ -9,8 +9,9 @@ from typing import Callable, Mapping
 
 from . import __version__
 from .app_context import AppContext
-from .config import Settings
+from .config import LOG_LEVELS, Settings
 from .env import load_environment
+from .logging_config import configure_logging
 from .runtime import PROCESS_NAMES, offline_health_report, run_process
 
 
@@ -19,6 +20,7 @@ ContextFactory = Callable[[Mapping[str, str]], AppContext]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="telegram-ai-assistant")
+    parser.add_argument("--log-level", choices=sorted(LOG_LEVELS), default=None, type=str.upper)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("version")
@@ -44,17 +46,23 @@ def main(
 ) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "version":
+        configure_logging(args.log_level or "INFO")
         print(__version__)
         return 0
     if args.command == "run":
-        environment = load_environment(env_file, os.environ if environ is None else environ)
-        return run_process(args.process, Settings.from_env(environment), runners=runners)
+        environment = _load_environment(args.log_level, env_file, environ)
+        settings = Settings.from_env(environment)
+        configure_logging(settings.log_level)
+        return run_process(args.process, settings, runners=runners)
     if args.command == "health":
         if args.offline:
+            environment = _load_environment(args.log_level, env_file, environ)
+            configure_logging(environment.get("LOG_LEVEL", "INFO"))
             report = offline_health_report()
         else:
             try:
-                environment = load_environment(env_file, os.environ if environ is None else environ)
+                environment = _load_environment(args.log_level, env_file, environ)
+                configure_logging(environment.get("LOG_LEVEL", "INFO"))
                 report = context_factory(environment).online_health_report()
             except Exception as exc:
                 print(f"health check failed: {type(exc).__name__}")
@@ -63,7 +71,8 @@ def main(
         return 0
     if args.command == "migrate":
         try:
-            environment = load_environment(env_file, os.environ if environ is None else environ)
+            environment = _load_environment(args.log_level, env_file, environ)
+            configure_logging(environment.get("LOG_LEVEL", "INFO"))
             context = context_factory(environment)
             context.migrate()
         except Exception as exc:
@@ -72,6 +81,17 @@ def main(
         print("migration applied")
         return 0
     raise ValueError(f"unknown command: {args.command}")
+
+
+def _load_environment(
+    log_level_override: str | None,
+    env_file: Path,
+    environ: Mapping[str, str] | None,
+) -> Mapping[str, str]:
+    environment = dict(load_environment(env_file, os.environ if environ is None else environ))
+    if log_level_override is not None:
+        environment["LOG_LEVEL"] = log_level_override
+    return environment
 
 
 def _health_report_payload(report):

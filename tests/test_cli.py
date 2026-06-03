@@ -1,4 +1,6 @@
+import io
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 from telegram_ai_assistant.cli import build_parser, main
 
@@ -20,6 +22,13 @@ class CLITests(unittest.TestCase):
         args = build_parser().parse_args(["version"])
 
         self.assertEqual(args.command, "version")
+
+    def test_parses_global_log_level(self):
+        args = build_parser().parse_args(["--log-level", "debug", "run", "listener"])
+
+        self.assertEqual(args.log_level, "DEBUG")
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.process, "listener")
 
     def test_parses_run_worker_command(self):
         args = build_parser().parse_args(["run", "worker"])
@@ -75,6 +84,44 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 9)
         self.assertEqual(calls, [1001])
+
+    def test_run_command_log_level_argument_overrides_environment(self):
+        calls = []
+
+        def runner(settings):
+            calls.append(settings.log_level)
+            return 0
+
+        exit_code = main(
+            ["--log-level", "debug", "run", "ingestor"],
+            environ={**VALID_ENV, "LOG_LEVEL": "ERROR"},
+            runners={"ingestor": runner},
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["DEBUG"])
+
+    def test_logs_go_to_stderr_without_replacing_stdout_payloads(self):
+        def runner(settings):
+            import logging
+
+            logging.getLogger("telegram_ai_assistant.test").debug("debug line")
+            print("stdout payload")
+            return 0
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(
+                ["--log-level", "debug", "run", "ingestor"],
+                environ=VALID_ENV,
+                runners={"ingestor": runner},
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("stdout payload", stdout.getvalue())
+        self.assertNotIn("debug line", stdout.getvalue())
+        self.assertIn("debug line", stderr.getvalue())
 
 
 if __name__ == "__main__":
