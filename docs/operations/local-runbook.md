@@ -43,6 +43,7 @@ TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
+LOG_LEVEL=INFO
 ```
 
 ## Services
@@ -54,6 +55,22 @@ BACKFILL_DAYS=30
 - `telegram-ai-assistant run worker` processes candidates and extraction batches.
 - `telegram-ai-assistant run bot` serves owner-only Telegram Bot API commands.
 - `telegram-ai-assistant run scheduler` drives retries, backfill, and periodic processing.
+
+## Logging
+
+Set `LOG_LEVEL` to `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. The default is `INFO`.
+
+```bash
+LOG_LEVEL=DEBUG PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run listener
+```
+
+Use `--log-level` to override `.env` for one command:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli --log-level debug run listener
+```
+
+Command result payloads stay on stdout. Application logs go to stderr, so JSON output can still be piped without mixing it with operational logs.
 
 ## Ingestor
 
@@ -135,6 +152,8 @@ Build and start the production listener stack:
 ```bash
 docker compose up -d postgres app-listener
 ```
+
+For Docker, set `LOG_LEVEL` in `.env` before starting the service. Use `INFO` for normal operation and `DEBUG` only while diagnosing listener scope or message persistence issues.
 
 Run migrations in the same image:
 
