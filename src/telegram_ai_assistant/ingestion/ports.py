@@ -96,7 +96,7 @@ class ReadOnlyIngestionClient:
         stream = method(
             chat_id,
             limit=limit,
-            max_id=before_message_id,
+            max_id=0 if before_message_id is None else before_message_id,
             offset_date=end_at,
             reverse=False,
         )

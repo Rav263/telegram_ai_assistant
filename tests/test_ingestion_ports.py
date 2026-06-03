@@ -137,6 +137,32 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
             ],
         )
 
+    def test_backfill_without_before_message_id_uses_telethon_default_max_id(self):
+        start_at = datetime(2022, 1, 1, tzinfo=UTC)
+        end_at = datetime(2022, 2, 1, tzinfo=UTC)
+        fake_client = FakeTelegramClient()
+        fake_client.messages = [FakeMessage(30, datetime(2022, 1, 20, tzinfo=UTC))]
+        client = ReadOnlyIngestionClient(fake_client, guard=ReadOnlyTelegramGuard())
+
+        messages = asyncio.run(
+            collect(
+                client.iter_backfill_messages(
+                    chat_id=1001,
+                    start_at=start_at,
+                    end_at=end_at,
+                    limit=100,
+                )
+            )
+        )
+
+        self.assertEqual([message.id for message in messages], [30])
+        self.assertEqual(
+            fake_client.calls,
+            [
+                ("iter_messages", 1001, 100, None, 0, end_at, False),
+            ],
+        )
+
     def test_allowed_call_and_close_call_through(self):
         fake_client = FakeTelegramClient()
         client = ReadOnlyIngestionClient(fake_client)
