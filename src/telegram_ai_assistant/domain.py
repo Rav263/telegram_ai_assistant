@@ -65,3 +65,14 @@ class ExtractedItem:
     rationale: str = ""
     due_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RuntimeEvent:
+    runtime_event_id: int
+    component: str
+    severity: str
+    event_type: str
+    message: str
+    metadata: dict[str, object]
+    created_at: datetime
