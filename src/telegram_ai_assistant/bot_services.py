@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .domain import ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
+from .domain import BackfillJobSummary, ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
 from .health import HealthReport
 
 
@@ -55,6 +55,8 @@ class BotServices:
         item_repository: Any | None = None,
         summary_query_repository: Any | None = None,
         review_repository: Any | None = None,
+        backfill_job_query_repository: Any | None = None,
+        settings_snapshot: Any | None = None,
     ):
         self.runtime_event_repository = runtime_event_repository
         self.health_report_provider = health_report_provider
@@ -62,6 +64,8 @@ class BotServices:
         self.item_repository = item_repository
         self.summary_query_repository = summary_query_repository
         self.review_repository = review_repository
+        self.backfill_job_query_repository = backfill_job_query_repository
+        self.settings_snapshot = settings_snapshot
 
     def logs(self) -> str:
         events = self.runtime_event_repository.latest_events(limit=10)
@@ -112,14 +116,21 @@ class BotServices:
             return BotResponse("No pending reviews.", _review_empty_markup())
         return BotResponse(_format_review_entries(entries), _review_reply_markup(entries))
 
-    def backfill(self) -> str:
-        return "Command /backfill is not implemented yet."
+    def backfill(self) -> BotResponse:
+        jobs = []
+        if self.backfill_job_query_repository is not None:
+            jobs = self.backfill_job_query_repository.latest_jobs(limit=3)
+        return BotResponse(_format_backfill(jobs), _backfill_markup())
 
-    def blacklist(self) -> str:
-        return "Command /blacklist is not implemented yet."
+    def blacklist(self) -> BotResponse:
+        if self.settings_snapshot is None:
+            return BotResponse("Settings service is not configured.", _main_menu_markup())
+        return BotResponse(_format_blacklist(self.settings_snapshot), _main_menu_markup())
 
-    def settings(self) -> str:
-        return "Command /settings is not implemented yet."
+    def settings(self) -> BotResponse:
+        if self.settings_snapshot is None:
+            return BotResponse("Settings service is not configured.", _main_menu_markup())
+        return BotResponse(_format_settings(self.settings_snapshot), _settings_markup())
 
     def handle_review_callback(self, action: str, target_id: str) -> str:
         if self.review_repository is None:
@@ -149,8 +160,14 @@ class BotServices:
         )
         return f"Status updated: {status.value}"
 
-    def handle_backfill_callback(self, action: str, target_id: str) -> None:
-        return None
+    def handle_backfill_callback(self, action: str, target_id: str) -> str:
+        if action == "30d":
+            return "Backfill preset selected: last 30 days."
+        if action == "90d":
+            return "Backfill preset selected: last 90 days."
+        if action == "status":
+            return "Backfill status is available from /backfill."
+        return "Unknown backfill action."
 
 
 def _format_runtime_event(event: RuntimeEvent) -> str:
@@ -320,6 +337,95 @@ def _review_reply_markup(entries: list[ReviewEntry]) -> dict[str, object]:
 
 def _review_empty_markup() -> dict[str, object]:
     return {"inline_keyboard": [[{"text": "Menu", "callback_data": "menu:help:0"}]]}
+
+
+def _format_backfill(jobs: list[BackfillJobSummary]) -> str:
+    lines = [
+        "Backfill:",
+        "Presets are bounded and use configured backfill limits.",
+    ]
+    if not jobs:
+        lines.append("Last jobs: none")
+        return "\n".join(lines)
+
+    lines.append("Last jobs:")
+    for job in jobs:
+        error = f" error={job.error}" if job.error else ""
+        lines.append(
+            f"- #{job.backfill_job_id} {job.status} "
+            f"{job.from_date.isoformat()}..{job.to_date.isoformat()}{error}"
+        )
+    return "\n".join(lines)
+
+
+def _backfill_markup() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Last 30 days", "callback_data": "backfill:30d:0"},
+                {"text": "Last 90 days", "callback_data": "backfill:90d:0"},
+            ],
+            [
+                {"text": "Status", "callback_data": "backfill:status:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ],
+        ]
+    }
+
+
+def _format_blacklist(settings: Any) -> str:
+    allowed = _ids_text(getattr(settings, "telegram_listener_allowed_channel_ids", ()))
+    denied = _ids_text(getattr(settings, "telegram_listener_denied_chat_ids", ()))
+    return "\n".join(
+        [
+            "Listener policy:",
+            "private/basic groups/supergroups are allowed by default",
+            "broadcast channels are ignored unless allowlisted",
+            f"allowed_channel_ids={allowed}",
+            f"denied_chat_ids={denied}",
+            "Change policy through env values and restart the services.",
+        ]
+    )
+
+
+def _format_settings(settings: Any) -> str:
+    allowed = _ids_text(getattr(settings, "telegram_listener_allowed_channel_ids", ()))
+    denied = _ids_text(getattr(settings, "telegram_listener_denied_chat_ids", ()))
+    return "\n".join(
+        [
+            "Settings:",
+            f"account_id={getattr(settings, 'telegram_ingest_account_id', '')}",
+            f"ingest_chat_id={getattr(settings, 'telegram_ingest_chat_id', 0)}",
+            f"listener_allowed_channel_ids={allowed}",
+            f"listener_denied_chat_ids={denied}",
+            f"lm_studio_base_url={getattr(settings, 'lm_studio_base_url', '')}",
+            f"lm_studio_model={getattr(settings, 'lm_studio_model', '')}",
+            f"worker_batch_size={getattr(settings, 'worker_batch_size', '')}",
+            f"worker_poll_interval_seconds={getattr(settings, 'worker_poll_interval_seconds', '')}",
+            f"worker_item_auto_apply_threshold={getattr(settings, 'worker_item_auto_apply_threshold', '')}",
+            f"worker_status_auto_apply_threshold={getattr(settings, 'worker_status_auto_apply_threshold', '')}",
+            f"log_level={getattr(settings, 'log_level', '')}",
+            f"telegram_data_dir={getattr(settings, 'telegram_data_dir', '')}",
+        ]
+    )
+
+
+def _settings_markup() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Health", "callback_data": "menu:health:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ]
+        ]
+    }
+
+
+def _ids_text(values: object) -> str:
+    items = tuple(values or ())
+    if not items:
+        return "none"
+    return ",".join(str(value) for value in items)
 
 
 def _format_tasks(items: list[ExtractedItem]) -> str:

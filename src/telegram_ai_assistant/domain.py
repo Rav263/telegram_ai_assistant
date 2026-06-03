@@ -79,6 +79,16 @@ class ReviewEntry:
 
 
 @dataclass(frozen=True)
+class BackfillJobSummary:
+    backfill_job_id: int
+    status: str
+    from_date: datetime
+    to_date: datetime
+    error: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class RuntimeEvent:
     runtime_event_id: int
     component: str

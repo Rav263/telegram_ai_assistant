@@ -5,6 +5,7 @@ import unittest
 from telegram_ai_assistant.db import repositories
 from telegram_ai_assistant.db.migrations import apply_schema
 from telegram_ai_assistant.db.repositories import (
+    BackfillJobQueryRepository,
     CandidateRepository,
     ItemRepository,
     LLMRunRepository,
@@ -16,6 +17,7 @@ from telegram_ai_assistant.db.repositories import (
     RuntimeEventRepository,
 )
 from telegram_ai_assistant.domain import (
+    BackfillJobSummary,
     ExtractedItem,
     ItemStatus,
     ItemType,
@@ -684,6 +686,44 @@ class ReviewRepositoryTests(unittest.TestCase):
         self.assertIn("update review_queue", compact_sql(sql).lower())
         self.assertEqual(params["review_id"], 9)
         self.assertEqual(params["state"], "rejected")
+
+
+class BackfillJobQueryRepositoryTests(unittest.TestCase):
+    def test_latest_backfill_jobs_reads_recent_jobs_for_account(self):
+        connection = RecordingConnection()
+        now = datetime(2026, 6, 3, 8, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchall_result = [
+            {
+                "backfill_job_id": 3,
+                "status": "completed",
+                "from_date": now,
+                "to_date": now,
+                "error": "",
+                "created_at": now,
+            }
+        ]
+
+        jobs = BackfillJobQueryRepository(connection, account_id="main").latest_jobs(limit=3)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from backfill_jobs", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 3)
+        self.assertEqual(
+            jobs,
+            [
+                BackfillJobSummary(
+                    backfill_job_id=3,
+                    status="completed",
+                    from_date=now,
+                    to_date=now,
+                    error="",
+                    created_at=now,
+                )
+            ],
+        )
 
 
 class RuntimeEventRepositoryTests(unittest.TestCase):

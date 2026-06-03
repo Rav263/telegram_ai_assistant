@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, Protocol, Sequence
 
 from telegram_ai_assistant.domain import (
+    BackfillJobSummary,
     ExtractedItem,
     ItemStatus,
     ItemType,
@@ -125,6 +126,17 @@ def _review_entry_from_row(row: object) -> ReviewEntry:
         payload=_json_object(_row_value(row, "payload", 4)),
         created_at=_row_value(row, "created_at", 5),
         item=_review_item_from_row(row),
+    )
+
+
+def _backfill_job_summary_from_row(row: object) -> BackfillJobSummary:
+    return BackfillJobSummary(
+        backfill_job_id=int(_row_value(row, "backfill_job_id", 0)),
+        status=str(_row_value(row, "status", 1)),
+        from_date=_row_value(row, "from_date", 2),
+        to_date=_row_value(row, "to_date", 3),
+        error=str(_row_value(row, "error", 4) or ""),
+        created_at=_row_value(row, "created_at", 5),
     )
 
 
@@ -1009,6 +1021,36 @@ class ReviewRepository:
                 "state": state,
             },
         )
+
+
+class BackfillJobQueryRepository:
+    def __init__(self, connection: Connection, *, account_id: str):
+        self._connection = connection
+        self._account_id = account_id
+
+    def latest_jobs(self, *, limit: int = 3) -> list[BackfillJobSummary]:
+        sql = """
+            SELECT
+                backfill_job_id,
+                status,
+                from_date,
+                to_date,
+                error,
+                created_at
+            FROM backfill_jobs
+            WHERE account_id = %(account_id)s
+            ORDER BY created_at DESC, backfill_job_id DESC
+            LIMIT %(limit)s
+        """
+        rows = _fetchall(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "limit": limit,
+            },
+        )
+        return [_backfill_job_summary_from_row(row) for row in rows]
 
 
 class RuntimeEventRepository:

@@ -2,7 +2,15 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.bot_services import BotServices
-from telegram_ai_assistant.domain import ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent, SourceRef
+from telegram_ai_assistant.domain import (
+    BackfillJobSummary,
+    ExtractedItem,
+    ItemStatus,
+    ItemType,
+    ReviewEntry,
+    RuntimeEvent,
+    SourceRef,
+)
 from telegram_ai_assistant.health import ComponentHealth, HealthReport, HealthStatus
 
 
@@ -60,6 +68,31 @@ class FakeReviewRepository:
     def reject_review(self, review_id):
         self.calls.append(("reject_review", review_id))
         return "Review rejected."
+
+
+class FakeBackfillJobQueryRepository:
+    def __init__(self, jobs=()):
+        self.jobs = list(jobs)
+        self.calls = []
+
+    def latest_jobs(self, *, limit):
+        self.calls.append(("latest_jobs", limit))
+        return self.jobs[:limit]
+
+
+class FakeSettingsSnapshot:
+    telegram_ingest_account_id = "owner"
+    telegram_ingest_chat_id = 123
+    telegram_listener_allowed_channel_ids = (777,)
+    telegram_listener_denied_chat_ids = (888,)
+    lm_studio_base_url = "http://host.docker.internal:1234/v1"
+    lm_studio_model = "qwen2.5"
+    worker_batch_size = 25
+    worker_poll_interval_seconds = 10
+    worker_item_auto_apply_threshold = 0.8
+    worker_status_auto_apply_threshold = 0.8
+    log_level = "INFO"
+    telegram_data_dir = "/Users/blda/.telegram/telegram_ai_assistant"
 
 
 def make_task(
@@ -187,10 +220,10 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("postgres: ok database=connected", text)
         self.assertIn("lm_studio: down error=URLError", text)
 
-    def test_unimplemented_commands_return_stable_message(self):
+    def test_settings_returns_safe_message_when_not_configured(self):
         services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
 
-        self.assertEqual(services.backfill(), "Command /backfill is not implemented yet.")
+        self.assertEqual(services.settings().text, "Settings service is not configured.")
 
     def test_summary_groups_items_and_includes_navigation_buttons(self):
         query = FakeSummaryQueryRepository(
@@ -384,6 +417,67 @@ class BotServicesTests(unittest.TestCase):
         self.assertEqual(approve, "Review approved.")
         self.assertEqual(reject, "Review rejected.")
         self.assertEqual(repository.calls, [("approve_review", 7), ("reject_review", 8)])
+
+    def test_backfill_shows_presets_and_latest_jobs(self):
+        now = datetime(2026, 6, 3, 8, 0, tzinfo=UTC)
+        jobs = FakeBackfillJobQueryRepository(
+            [
+                BackfillJobSummary(
+                    backfill_job_id=3,
+                    status="completed",
+                    from_date=now,
+                    to_date=now,
+                    error="",
+                    created_at=now,
+                )
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            backfill_job_query_repository=jobs,
+        )
+
+        response = services.backfill()
+
+        self.assertEqual(jobs.calls, [("latest_jobs", 3)])
+        self.assertIn("Backfill:", response.text)
+        self.assertIn("Last jobs:", response.text)
+        self.assertEqual(response.reply_markup["inline_keyboard"][0][0]["callback_data"], "backfill:30d:0")
+
+    def test_blacklist_shows_listener_policy_from_settings_snapshot(self):
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            settings_snapshot=FakeSettingsSnapshot(),
+        )
+
+        response = services.blacklist()
+
+        self.assertIn("Listener policy:", response.text)
+        self.assertIn("allowed_channel_ids=777", response.text)
+        self.assertIn("denied_chat_ids=888", response.text)
+        self.assertNotIn("api_hash", response.text.lower())
+
+    def test_settings_shows_allowlisted_non_secret_values(self):
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            settings_snapshot=FakeSettingsSnapshot(),
+        )
+
+        response = services.settings()
+
+        self.assertIn("Settings:", response.text)
+        self.assertIn("account_id=owner", response.text)
+        self.assertIn("lm_studio_model=qwen2.5", response.text)
+        self.assertNotIn("token", response.text.lower())
+        self.assertNotIn("api_hash", response.text.lower())
+        self.assertNotIn("database_url", response.text.lower())
+
+    def test_backfill_callbacks_return_safe_mvp_responses(self):
+        services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
+
+        self.assertIn("30 days", services.handle_backfill_callback("30d", "0"))
+        self.assertIn("90 days", services.handle_backfill_callback("90d", "0"))
+        self.assertIn("Backfill", services.handle_backfill_callback("status", "0"))
 
     def test_status_callback_applies_allowed_status_change(self):
         items = FakeItemRepository()
