@@ -83,13 +83,13 @@ Add new candidate reasons:
 Suggested weights:
 
 - `time_expression`: `+0.25`
-- `task_intent`: `+0.35`
-- `errand_action`: `+0.35`
-- `logistics_context`: `+0.15`
+- `task_intent`: `+0.25`
+- `errand_action`: `+0.25`
+- `logistics_context`: `+0.10`
 - `private_chat_priority`: `+0.15`
 - existing reasons keep their current weights unless a test exposes a regression.
 
-The example message in a private chat should score at least `0.8`:
+The example message in a private chat should score at least `0.8`, and the same message in a group should score lower because it does not receive the private-chat bonus:
 
 ```text
 time_expression + task_intent + errand_action + logistics_context + private_chat_priority
