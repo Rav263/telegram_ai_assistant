@@ -106,6 +106,29 @@ class TelegramBotApiTests(unittest.TestCase):
             },
         )
 
+    def test_send_long_message_splits_text_and_keeps_markup_on_last_chunk(self):
+        transport = FakeTransport()
+        api = TelegramBotApi(token="bot-token", transport=transport)
+
+        api.send_long_message(
+            chat_id=123,
+            text="abcdef",
+            reply_markup={"inline_keyboard": []},
+            max_length=3,
+        )
+
+        self.assertEqual(
+            [call["payload"] for call in transport.calls],
+            [
+                {"chat_id": 123, "text": "abc"},
+                {
+                    "chat_id": 123,
+                    "text": "def",
+                    "reply_markup": {"inline_keyboard": []},
+                },
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

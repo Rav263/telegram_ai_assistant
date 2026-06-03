@@ -172,6 +172,12 @@ CREATE TABLE IF NOT EXISTS bot_actions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS bot_runtime_state (
+    bot_name TEXT PRIMARY KEY,
+    last_update_id BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     setting_key TEXT PRIMARY KEY,
     setting_value JSONB NOT NULL,

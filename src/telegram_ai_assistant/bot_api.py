@@ -28,6 +28,23 @@ class TelegramBotApi:
             payload["reply_markup"] = reply_markup
         return self._post("sendMessage", payload)
 
+    def send_long_message(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        reply_markup: Mapping[str, Any] | None = None,
+        max_length: int = 4096,
+    ) -> None:
+        chunks = _split_text(text, max_length=max_length)
+        for index, chunk in enumerate(chunks):
+            is_last = index == len(chunks) - 1
+            self.send_message(
+                chat_id=chat_id,
+                text=chunk,
+                reply_markup=reply_markup if is_last else None,
+            )
+
     def get_updates(self, *, offset: int | None = None, timeout: int = 25):
         payload: dict[str, Any] = {
             "timeout": timeout,
@@ -83,3 +100,11 @@ def _urllib_transport(url: str, body: bytes, headers: Mapping[str, str]):
     http_request = request.Request(url, data=body, headers=dict(headers), method="POST")
     with request.urlopen(http_request) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _split_text(text: str, *, max_length: int) -> list[str]:
+    if max_length <= 0:
+        raise ValueError("max_length must be positive")
+    if not text:
+        return [""]
+    return [text[index : index + max_length] for index in range(0, len(text), max_length)]

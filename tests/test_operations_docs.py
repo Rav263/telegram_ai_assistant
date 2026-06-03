@@ -46,6 +46,8 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("telegram-ai-assistant run worker", text)
         self.assertIn("telegram-ai-assistant run bot", text)
         self.assertIn("/logs", text)
+        self.assertIn("/tasks", text)
+        self.assertIn("bot_runtime_state", text)
         self.assertIn("endpoint_host", text)
         self.assertIn("LOG_LEVEL", text)
         self.assertIn("--log-level debug", text)

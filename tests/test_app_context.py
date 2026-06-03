@@ -22,6 +22,7 @@ class FakeConnection:
     def __init__(self):
         self.entered = False
         self.exited = False
+        self.committed = False
 
     def __enter__(self):
         self.entered = True
@@ -30,6 +31,9 @@ class FakeConnection:
     def __exit__(self, exc_type, exc, traceback):
         self.exited = True
         return False
+
+    def commit(self):
+        self.committed = True
 
 
 class AppContextTests(unittest.TestCase):
@@ -225,7 +229,11 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["router"].access.allowed_user_id, 456)
         self.assertEqual(captured["router"].bot_api, "bot-api")
         self.assertEqual(captured["router"].services.runtime_event_repository.__class__.__name__, "RuntimeEventRepository")
+        self.assertEqual(captured["router"].services.item_query_repository.__class__.__name__, "ItemQueryRepository")
+        self.assertEqual(captured["router"].services.item_repository.__class__.__name__, "ItemRepository")
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
+        self.assertEqual(captured["state_repository"].__class__.__name__, "BotRuntimeStateRepository")
+        self.assertEqual(captured["commit"], factory.connection_obj.commit)
         self.assertIs(captured["stop_requested"], stop_requested)
         self.assertEqual(factory.opened, 1)
         self.assertTrue(factory.connection_obj.exited)

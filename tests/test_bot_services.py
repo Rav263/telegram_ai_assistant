@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.bot_services import BotServices
-from telegram_ai_assistant.domain import RuntimeEvent
+from telegram_ai_assistant.domain import ExtractedItem, ItemStatus, ItemType, RuntimeEvent, SourceRef
 from telegram_ai_assistant.health import ComponentHealth, HealthReport, HealthStatus
 
 
@@ -14,6 +14,44 @@ class FakeRuntimeEventRepository:
     def latest_events(self, *, limit):
         self.calls.append(("latest_events", limit))
         return self.events[:limit]
+
+
+class FakeItemQueryRepository:
+    def __init__(self, items=()):
+        self.items = list(items)
+        self.calls = []
+
+    def list_open_tasks(self, *, limit):
+        self.calls.append(("list_open_tasks", limit))
+        return self.items[:limit]
+
+
+class FakeItemRepository:
+    def __init__(self):
+        self.status_changes = []
+
+    def apply_status_change(self, change):
+        self.status_changes.append(change)
+
+
+def make_task(
+    *,
+    item_id="task-1",
+    item_type=ItemType.TASK,
+    title="Send report",
+    status=ItemStatus.OPEN,
+    due_at=None,
+):
+    return ExtractedItem(
+        item_id=item_id,
+        item_type=item_type,
+        title=title,
+        description="Prepare and send the report",
+        confidence=0.91,
+        status=status,
+        due_at=due_at,
+        sources=(SourceRef(chat_id=100, telegram_message_id=200),),
+    )
 
 
 class BotServicesTests(unittest.TestCase):
@@ -100,8 +138,92 @@ class BotServicesTests(unittest.TestCase):
     def test_unimplemented_commands_return_stable_message(self):
         services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
 
-        self.assertEqual(services.tasks(), "Command /tasks is not implemented yet.")
         self.assertEqual(services.summary(), "Command /summary is not implemented yet.")
+
+    def test_tasks_lists_open_items_with_status_action_buttons(self):
+        query = FakeItemQueryRepository(
+            [
+                make_task(item_id="task-1", title="Send report"),
+                make_task(
+                    item_id="task-2",
+                    item_type=ItemType.COMMITMENT,
+                    title="Call back",
+                    status=ItemStatus.WAITING_FOR,
+                ),
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            item_query_repository=query,
+        )
+
+        response = services.tasks()
+
+        self.assertEqual(query.calls, [("list_open_tasks", 10)])
+        self.assertIn("Open tasks:", response.text)
+        self.assertIn("1. Send report [task/open]", response.text)
+        self.assertIn("2. Call back [commitment/waiting_for]", response.text)
+        self.assertEqual(
+            response.reply_markup,
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Done 1", "callback_data": "status:completed:task-1"},
+                        {"text": "Partial 1", "callback_data": "status:partially_completed:task-1"},
+                        {"text": "Cancel 1", "callback_data": "status:cancelled:task-1"},
+                    ],
+                    [
+                        {"text": "Done 2", "callback_data": "status:completed:task-2"},
+                        {"text": "Partial 2", "callback_data": "status:partially_completed:task-2"},
+                        {"text": "Cancel 2", "callback_data": "status:cancelled:task-2"},
+                    ],
+                ]
+            },
+        )
+
+    def test_tasks_returns_empty_message_when_no_open_items_exist(self):
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            item_query_repository=FakeItemQueryRepository(),
+        )
+
+        response = services.tasks()
+
+        self.assertEqual(response.text, "No open tasks.")
+        self.assertIsNone(response.reply_markup)
+
+    def test_status_callback_applies_allowed_status_change(self):
+        items = FakeItemRepository()
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            item_repository=items,
+        )
+
+        text = services.handle_status_callback("completed", "task-1")
+
+        self.assertEqual(text, "Status updated: completed")
+        self.assertEqual(
+            items.status_changes,
+            [
+                {
+                    "item_id": "task-1",
+                    "new_status": ItemStatus.COMPLETED,
+                    "rationale": "Updated from bot callback.",
+                }
+            ],
+        )
+
+    def test_status_callback_rejects_unknown_status_without_database_write(self):
+        items = FakeItemRepository()
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            item_repository=items,
+        )
+
+        text = services.handle_status_callback("unknown", "task-1")
+
+        self.assertEqual(text, "Unknown status action.")
+        self.assertEqual(items.status_changes, [])
 
 
 if __name__ == "__main__":

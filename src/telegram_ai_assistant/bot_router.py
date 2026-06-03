@@ -51,8 +51,8 @@ class BotRouter:
         if method_name is None:
             return
 
-        response_text = str(getattr(self.services, method_name)())
-        self.bot_api.send_message(chat_id=chat_id, text=response_text)
+        response = getattr(self.services, method_name)()
+        self._send_response(chat_id=chat_id, response=response)
 
     def _handle_callback(self, callback_query: Mapping[str, Any]) -> None:
         user_id = int(callback_query.get("from", {}).get("id", 0))
@@ -74,14 +74,11 @@ class BotRouter:
 
         kind, action, target_id = parts
         if kind == "review":
-            self.services.handle_review_callback(action, target_id)
-            answer_text = "review callback"
+            answer_text = str(self.services.handle_review_callback(action, target_id))
         elif kind == "status":
-            self.services.handle_status_callback(action, target_id)
-            answer_text = "status callback"
+            answer_text = str(self.services.handle_status_callback(action, target_id))
         elif kind == "backfill":
-            self.services.handle_backfill_callback(action, target_id)
-            answer_text = "backfill callback"
+            answer_text = str(self.services.handle_backfill_callback(action, target_id))
         else:
             return
 
@@ -90,6 +87,15 @@ class BotRouter:
     def _audit_denied(self, user_id: int) -> None:
         if self.audit_log is not None:
             self.audit_log({"event": "denied", "user_id": user_id})
+
+    def _send_response(self, *, chat_id: int, response: Any) -> None:
+        text = str(getattr(response, "text", response))
+        reply_markup = getattr(response, "reply_markup", None)
+        send_long_message = getattr(self.bot_api, "send_long_message", None)
+        if callable(send_long_message):
+            send_long_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+            return
+        self.bot_api.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
 def _extract_command(text: str) -> str:

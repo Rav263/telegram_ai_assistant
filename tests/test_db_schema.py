@@ -31,6 +31,7 @@ class DBSchemaTests(unittest.TestCase):
             "runtime_events",
             "backfill_jobs",
             "bot_actions",
+            "bot_runtime_state",
             "settings",
         )
 
@@ -164,6 +165,18 @@ class DBSchemaTests(unittest.TestCase):
             "create index if not exists idx_runtime_events_severity_created_at on runtime_events(severity, created_at desc, runtime_event_id desc)",
             schema,
         )
+
+    def test_bot_runtime_state_persists_update_offsets(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists bot_runtime_state", schema)
+        self.assertRegex(schema, r"bot_name\s+text\s+primary\s+key")
+        self.assertRegex(schema, r"last_update_id\s+bigint\s+not\s+null")
 
 
 if __name__ == "__main__":

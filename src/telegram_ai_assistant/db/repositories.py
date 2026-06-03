@@ -9,9 +9,11 @@ from typing import Any, Protocol, Sequence
 from telegram_ai_assistant.domain import (
     ExtractedItem,
     ItemStatus,
+    ItemType,
     Message,
     MessageDirection,
     RuntimeEvent,
+    SourceRef,
 )
 
 
@@ -96,6 +98,40 @@ def _runtime_event_from_row(row: object) -> RuntimeEvent:
         metadata=_json_object(_row_value(row, "metadata", 5)),
         created_at=_row_value(row, "created_at", 6),
     )
+
+
+def _item_from_row(row: object) -> ExtractedItem:
+    return ExtractedItem(
+        item_id=str(_row_value(row, "item_id", 0)),
+        item_type=ItemType(str(_row_value(row, "item_type", 1))),
+        title=str(_row_value(row, "title", 2)),
+        description=str(_row_value(row, "description", 3) or ""),
+        confidence=float(_row_value(row, "confidence", 4)),
+        status=ItemStatus(str(_row_value(row, "status", 5))),
+        rationale=str(_row_value(row, "rationale", 6) or ""),
+        due_at=_row_value(row, "due_at", 7),
+        sources=_source_refs_from_json(_row_value(row, "source_refs", 8)),
+        metadata={str(key): str(value) for key, value in _json_object(_row_value(row, "metadata", 9)).items()},
+    )
+
+
+def _source_refs_from_json(value: object) -> tuple[SourceRef, ...]:
+    if isinstance(value, str):
+        decoded = json.loads(value)
+    else:
+        decoded = value
+    if not isinstance(decoded, list):
+        return ()
+    refs = []
+    for item in decoded:
+        if isinstance(item, Mapping):
+            refs.append(
+                SourceRef(
+                    chat_id=int(item.get("chat_id", 0)),
+                    telegram_message_id=int(item.get("telegram_message_id", 0)),
+                )
+            )
+    return tuple(refs)
 
 
 def _json_object(value: object) -> dict[str, object]:
@@ -623,6 +659,53 @@ class ItemRepository:
         _execute(self._connection, event_sql, event_params)
 
 
+class ItemQueryRepository:
+    def __init__(self, connection: Connection, *, account_id: str):
+        self._connection = connection
+        self._account_id = account_id
+
+    def list_open_tasks(self, *, limit: int = 10) -> list[ExtractedItem]:
+        sql = """
+            SELECT
+                item_id,
+                item_type,
+                title,
+                description,
+                confidence,
+                status,
+                rationale,
+                due_at,
+                source_refs,
+                metadata
+            FROM extracted_items
+            WHERE account_id = %(account_id)s
+              AND item_type = ANY(%(item_types)s)
+              AND status = ANY(%(statuses)s)
+            ORDER BY
+                due_at ASC NULLS LAST,
+                updated_at DESC,
+                item_id ASC
+            LIMIT %(limit)s
+        """
+        params = {
+            "account_id": self._account_id,
+            "item_types": [
+                ItemType.TASK.value,
+                ItemType.COMMITMENT.value,
+                ItemType.REMINDER.value,
+                ItemType.WAITING_FOR.value,
+            ],
+            "statuses": [
+                ItemStatus.OPEN.value,
+                ItemStatus.IN_PROGRESS.value,
+                ItemStatus.PARTIALLY_COMPLETED.value,
+                ItemStatus.WAITING_FOR.value,
+            ],
+            "limit": limit,
+        }
+        return [_item_from_row(row) for row in _fetchall(self._connection, sql, params)]
+
+
 class ReviewRepository:
     def __init__(self, connection: Connection, *, account_id: str):
         self._connection = connection
@@ -756,6 +839,46 @@ class RuntimeEventRepository:
         }
         rows = _fetchall(self._connection, sql, params)
         return [_runtime_event_from_row(row) for row in rows]
+
+
+class BotRuntimeStateRepository:
+    def __init__(self, connection: Connection):
+        self._connection = connection
+
+    def get_last_update_id(self, *, bot_name: str) -> int | None:
+        sql = """
+            SELECT last_update_id
+            FROM bot_runtime_state
+            WHERE bot_name = %(bot_name)s
+        """
+        row = _fetchone(self._connection, sql, {"bot_name": bot_name})
+        if row is None:
+            return None
+        return int(_row_value(row, "last_update_id", 0))
+
+    def save_last_update_id(self, *, bot_name: str, last_update_id: int) -> None:
+        sql = """
+            INSERT INTO bot_runtime_state (
+                bot_name,
+                last_update_id
+            )
+            VALUES (
+                %(bot_name)s,
+                %(last_update_id)s
+            )
+            ON CONFLICT (bot_name)
+            DO UPDATE SET
+                last_update_id = EXCLUDED.last_update_id,
+                updated_at = NOW()
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "bot_name": bot_name,
+                "last_update_id": last_update_id,
+            },
+        )
 
 
 class LLMRunRepository:

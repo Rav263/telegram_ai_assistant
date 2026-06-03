@@ -14,6 +14,9 @@ class FakeBotApi:
         self.sent_messages.append((chat_id, text, reply_markup))
         return {"message_id": len(self.sent_messages)}
 
+    def send_long_message(self, *, chat_id: int, text: str, reply_markup=None):
+        return self.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
     def answer_callback_query(self, *, callback_query_id: str, text: str | None = None, show_alert=False):
         self.answered_callbacks.append((callback_query_id, text, show_alert))
         return True
@@ -133,14 +136,56 @@ class BotRouterTests(unittest.TestCase):
                 self.assertEqual(services.calls, [expected_call])
                 self.assertEqual(bot.sent_messages[0], (123, f"{expected_call[0]} response", None))
 
+    def test_owner_command_can_send_response_markup(self):
+        class MarkupServices(FakeBotServices):
+            def tasks(self):
+                self.calls.append(("tasks",))
+                return type(
+                    "Response",
+                    (),
+                    {
+                        "text": "tasks response",
+                        "reply_markup": {"inline_keyboard": [[{"text": "Done", "callback_data": "x"}]]},
+                    },
+                )()
+
+        services = MarkupServices()
+        bot = FakeBotApi()
+        router = BotRouter(
+            access=BotAccessController(allowed_user_id=100),
+            bot_api=bot,
+            services=services,
+        )
+
+        router.handle_update(
+            {
+                "message": {
+                    "from": {"id": 100},
+                    "chat": {"id": 123},
+                    "text": "/tasks",
+                }
+            }
+        )
+
+        self.assertEqual(bot.sent_messages[0][2], {"inline_keyboard": [[{"text": "Done", "callback_data": "x"}]]})
+
     def test_inline_callbacks_dispatch_to_review_status_and_backfill_actions(self):
         callback_cases = {
-            "review:approve:item-1": ("review_callback", "approve", "item-1"),
-            "status:completed:item-1": ("status_callback", "completed", "item-1"),
-            "backfill:cancel:job-1": ("backfill_callback", "cancel", "job-1"),
+            "review:approve:item-1": (
+                ("review_callback", "approve", "item-1"),
+                "review callback response",
+            ),
+            "status:completed:item-1": (
+                ("status_callback", "completed", "item-1"),
+                "status callback response",
+            ),
+            "backfill:cancel:job-1": (
+                ("backfill_callback", "cancel", "job-1"),
+                "backfill callback response",
+            ),
         }
 
-        for callback_data, expected_call in callback_cases.items():
+        for callback_data, (expected_call, expected_answer) in callback_cases.items():
             with self.subTest(callback_data=callback_data):
                 services = FakeBotServices()
                 bot = FakeBotApi()
@@ -165,7 +210,7 @@ class BotRouterTests(unittest.TestCase):
                 )
 
                 self.assertEqual(services.calls, [expected_call])
-                self.assertEqual(bot.answered_callbacks[0], ("callback-1", services.calls[0][0].replace("_", " "), False))
+                self.assertEqual(bot.answered_callbacks[0], ("callback-1", expected_answer, False))
 
 
 if __name__ == "__main__":

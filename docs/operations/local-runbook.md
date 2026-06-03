@@ -144,10 +144,13 @@ Use `telegram-ai-assistant run bot` for owner-only Telegram Bot API long polling
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run bot
 ```
 
+The bot persists the latest processed Telegram `update_id` in `bot_runtime_state`, so restarts continue from the next update instead of replaying old commands. Telegram Bot API polling failures are recorded as sanitized runtime events and retried with a bounded backoff.
+
 Implemented production commands:
 
 - `/logs` shows sanitized warning/error runtime events.
 - `/health` shows Postgres and LM Studio health.
+- `/tasks` lists open task-like items and includes inline buttons to mark each item completed, partially completed, or cancelled.
 
 Other routed commands currently return a stable "not implemented yet" response until their product services are built.
 

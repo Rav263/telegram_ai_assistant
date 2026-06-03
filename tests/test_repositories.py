@@ -8,6 +8,8 @@ from telegram_ai_assistant.db.repositories import (
     CandidateRepository,
     ItemRepository,
     LLMRunRepository,
+    BotRuntimeStateRepository,
+    ItemQueryRepository,
     MessageProcessingRepository,
     MessageRepository,
     ReviewRepository,
@@ -451,6 +453,43 @@ class ItemRepositoryTests(unittest.TestCase):
         self.assertEqual(event_params["reason"], "Owner wrote it was done.")
 
 
+class ItemQueryRepositoryTests(unittest.TestCase):
+    def test_list_open_tasks_reads_active_task_like_items_for_account(self):
+        connection = RecordingConnection()
+        due_at = datetime(2026, 6, 3, 8, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchall_result = [
+            {
+                "item_id": "item-1",
+                "item_type": "task",
+                "title": "Send report",
+                "description": "Prepare and send the report",
+                "confidence": 0.91,
+                "status": "open",
+                "rationale": "Owner promised it.",
+                "due_at": due_at,
+                "source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+                "metadata": {"topic": "work"},
+            }
+        ]
+
+        items = ItemQueryRepository(connection, account_id="main").list_open_tasks(limit=5)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from extracted_items", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertIn("item_type = any", normalized_sql)
+        self.assertIn("status = any", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 5)
+        self.assertEqual(params["item_types"], ["task", "commitment", "reminder", "waiting_for"])
+        self.assertEqual(params["statuses"], ["open", "in_progress", "partially_completed", "waiting_for"])
+        self.assertEqual(items[0].item_id, "item-1")
+        self.assertEqual(items[0].item_type, ItemType.TASK)
+        self.assertEqual(items[0].status, ItemStatus.OPEN)
+        self.assertEqual(items[0].sources, (SourceRef(chat_id=100, telegram_message_id=200),))
+
+
 class ReviewRepositoryTests(unittest.TestCase):
     def test_enqueue_item_saves_candidate_item_and_review_entry(self):
         connection = RecordingConnection()
@@ -549,6 +588,34 @@ class RuntimeEventRepositoryTests(unittest.TestCase):
                 )
             ],
         )
+
+
+class BotRuntimeStateRepositoryTests(unittest.TestCase):
+    def test_get_last_update_id_returns_none_for_missing_state(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = None
+
+        last_update_id = BotRuntimeStateRepository(connection).get_last_update_id(bot_name="default")
+
+        sql, params = connection.statements[0]
+        self.assertIn("from bot_runtime_state", compact_sql(sql).lower())
+        self.assertEqual(params["bot_name"], "default")
+        self.assertIsNone(last_update_id)
+
+    def test_save_last_update_id_upserts_state(self):
+        connection = RecordingConnection()
+
+        BotRuntimeStateRepository(connection).save_last_update_id(
+            bot_name="default",
+            last_update_id=42,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("insert into bot_runtime_state", normalized_sql)
+        self.assertIn("on conflict (bot_name)", normalized_sql)
+        self.assertEqual(params["bot_name"], "default")
+        self.assertEqual(params["last_update_id"], 42)
 
 
 class LLMRunRepositoryTests(unittest.TestCase):

@@ -11,8 +11,10 @@ from .bot_services import BotServices
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
 from .db.repositories import (
+    BotRuntimeStateRepository,
     CandidateRepository,
     ItemRepository,
+    ItemQueryRepository,
     LLMRunRepository,
     MessageProcessingRepository,
     ReviewRepository,
@@ -182,12 +184,22 @@ class AppContext:
                 services=BotServices(
                     runtime_event_repository=runtime_event_repository,
                     health_report_provider=self.online_health_report,
+                    item_query_repository=ItemQueryRepository(
+                        connection,
+                        account_id=self.settings.telegram_ingest_account_id,
+                    ),
+                    item_repository=ItemRepository(
+                        connection,
+                        account_id=self.settings.telegram_ingest_account_id,
+                    ),
                 ),
             )
             runtime = self.bot_runtime_factory(
                 bot_api=bot_api,
                 router=router,
                 runtime_event_repository=runtime_event_repository,
+                state_repository=BotRuntimeStateRepository(connection),
+                commit=connection.commit,
             )
             return runtime.run_forever(stop_requested=stop_requested)
 
