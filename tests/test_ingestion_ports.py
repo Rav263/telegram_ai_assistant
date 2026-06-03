@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.ingestion.ports import ReadOnlyIngestionClient
@@ -10,11 +11,18 @@ class FakeTelegramClient:
     def __init__(self):
         self.calls = []
         self.messages = ["first", "second"]
+        self.latest_message = FakeMessage(42)
 
-    async def iter_messages(self, chat_id, *, limit=None, min_id=None, reverse=False):
-        self.calls.append(("iter_messages", chat_id, limit, min_id, reverse))
+    async def iter_messages(self, chat_id, *, limit=None, min_id=None, offset_date=None, reverse=False):
+        self.calls.append(("iter_messages", chat_id, limit, min_id, offset_date, reverse))
         for message in self.messages:
             yield message
+
+    async def get_messages(self, chat_id, *, limit=None):
+        self.calls.append(("get_messages", chat_id, limit))
+        if limit == 1:
+            return [self.latest_message]
+        return list(self.messages)
 
     async def get_me(self):
         self.calls.append(("get_me",))
@@ -25,6 +33,11 @@ class FakeTelegramClient:
 
     async def send_message(self, chat_id, text):
         self.calls.append(("send_message", chat_id, text))
+
+
+class FakeMessage:
+    def __init__(self, message_id):
+        self.id = message_id
 
 
 class FakeTelethonClient(FakeTelegramClient):
@@ -60,8 +73,26 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
         self.assertEqual(
             fake_client.calls,
             [
-                ("iter_messages", 1001, 2, None, False),
-                ("iter_messages", 1001, 10, 40, True),
+                ("iter_messages", 1001, 2, None, None, False),
+                ("iter_messages", 1001, 10, 40, None, True),
+            ],
+        )
+
+    def test_recent_messages_and_latest_id_use_read_only_retrieval_methods(self):
+        fake_client = FakeTelegramClient()
+        client = ReadOnlyIngestionClient(fake_client, guard=ReadOnlyTelegramGuard())
+        since = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+
+        recent_messages = asyncio.run(collect(client.iter_recent_messages(chat_id=1001, since=since, limit=10)))
+        latest_message_id = asyncio.run(client.get_latest_message_id(chat_id=1001))
+
+        self.assertEqual(recent_messages, ["first", "second"])
+        self.assertEqual(latest_message_id, 42)
+        self.assertEqual(
+            fake_client.calls,
+            [
+                ("iter_messages", 1001, 10, None, since, True),
+                ("get_messages", 1001, 1),
             ],
         )
 

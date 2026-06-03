@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 import inspect
 from typing import Any, Protocol
 
@@ -18,6 +19,18 @@ class IngestionClient(Protocol):
         min_id: int | None = None,
         limit: int | None = None,
     ) -> AsyncIterator[object]:
+        pass
+
+    async def iter_recent_messages(
+        self,
+        chat_id: int,
+        *,
+        since: datetime,
+        limit: int | None = None,
+    ) -> AsyncIterator[object]:
+        pass
+
+    async def get_latest_message_id(self, chat_id: int) -> int:
         pass
 
     async def close(self) -> None:
@@ -46,6 +59,27 @@ class ReadOnlyIngestionClient:
         stream = method(chat_id, limit=limit, min_id=min_id, reverse=True)
         async for message in await _resolve_async_iterable(stream):
             yield message
+
+    async def iter_recent_messages(
+        self,
+        chat_id: int,
+        *,
+        since: datetime,
+        limit: int | None = None,
+    ) -> AsyncIterator[object]:
+        method = self._allowed_method("iter_messages")
+        stream = method(chat_id, limit=limit, offset_date=since, reverse=True)
+        async for message in await _resolve_async_iterable(stream):
+            yield message
+
+    async def get_latest_message_id(self, chat_id: int) -> int:
+        method = self._allowed_method("get_messages")
+        messages = method(chat_id, limit=1)
+        if inspect.isawaitable(messages):
+            messages = await messages
+        if not messages:
+            return 0
+        return int(getattr(messages[0], "id", 0))
 
     async def call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         method = self._allowed_method(method_name)
