@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 import inspect
 from typing import Any, Protocol
@@ -44,14 +44,26 @@ class IngestionClient(Protocol):
     async def get_latest_message_id(self, chat_id: int) -> int:
         pass
 
+    async def listen_new_messages(self, handler: Callable[[object], Awaitable[None]]) -> None:
+        pass
+
+    async def run_until_disconnected(self) -> None:
+        pass
+
     async def close(self) -> None:
         pass
 
 
 class ReadOnlyIngestionClient:
-    def __init__(self, client: object, guard: ReadOnlyTelegramGuard | None = None):
+    def __init__(
+        self,
+        client: object,
+        guard: ReadOnlyTelegramGuard | None = None,
+        new_message_event_factory: Callable[[], object] | None = None,
+    ):
         self._client = client
         self._guard = guard or ReadOnlyTelegramGuard()
+        self._new_message_event_factory = new_message_event_factory
 
     async def iter_history(self, chat_id: int, *, limit: int | None = None) -> AsyncIterator[object]:
         method = self._allowed_method("iter_messages")
@@ -114,6 +126,15 @@ class ReadOnlyIngestionClient:
         if not messages:
             return 0
         return int(getattr(messages[0], "id", 0))
+
+    async def listen_new_messages(self, handler: Callable[[object], Awaitable[None]]) -> None:
+        method = self._allowed_method("add_event_handler")
+        if self._new_message_event_factory is None:
+            raise RuntimeError("NewMessage event factory is not configured")
+        method(handler, self._new_message_event_factory())
+
+    async def run_until_disconnected(self) -> None:
+        await self.call("run_until_disconnected")
 
     async def call(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         method = self._allowed_method(method_name)

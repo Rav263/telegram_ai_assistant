@@ -32,7 +32,12 @@ class TelethonIngestionAdapter(ReadOnlyIngestionClient):
         connect_result = client.connect()
         if hasattr(connect_result, "__await__"):
             await connect_result
-        return cls(client, guard=guard or ReadOnlyTelegramGuard())
+        new_message_event = _load_new_message_event()
+        return cls(
+            client,
+            guard=guard or ReadOnlyTelegramGuard(),
+            new_message_event_factory=lambda: new_message_event(),
+        )
 
 
 def _load_telegram_client() -> type[Any]:
@@ -41,3 +46,11 @@ def _load_telegram_client() -> type[Any]:
     except ImportError as exc:
         raise TelethonAdapterError("Telethon is required to use TelethonIngestionAdapter") from exc
     return TelegramClient
+
+
+def _load_new_message_event() -> type[Any]:
+    try:
+        from telethon import events
+    except ImportError as exc:
+        raise TelethonAdapterError("Telethon is required to use TelethonIngestionAdapter") from exc
+    return events.NewMessage

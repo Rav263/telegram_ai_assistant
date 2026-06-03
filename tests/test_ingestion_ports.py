@@ -12,6 +12,8 @@ class FakeTelegramClient:
         self.calls = []
         self.messages = ["first", "second"]
         self.latest_message = FakeMessage(42)
+        self.event_handlers = []
+        self.disconnected_waited = False
 
     async def iter_messages(
         self,
@@ -43,11 +45,23 @@ class FakeTelegramClient:
     async def send_message(self, chat_id, text):
         self.calls.append(("send_message", chat_id, text))
 
+    def add_event_handler(self, handler, event):
+        self.calls.append(("add_event_handler", event.__class__.__name__))
+        self.event_handlers.append((handler, event))
+
+    async def run_until_disconnected(self):
+        self.calls.append(("run_until_disconnected",))
+        self.disconnected_waited = True
+
 
 class FakeMessage:
     def __init__(self, message_id, date=None):
         self.id = message_id
         self.date = date
+
+
+class FakeNewMessageEvent:
+    pass
 
 
 class FakeTelethonClient(FakeTelegramClient):
@@ -173,6 +187,28 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
         self.assertEqual(identity, {"id": 1})
         self.assertEqual(fake_client.calls, [("get_me",), ("disconnect",)])
 
+    def test_listen_new_messages_registers_allowed_handler_and_waits_until_disconnected(self):
+        fake_client = FakeTelegramClient()
+        client = ReadOnlyIngestionClient(
+            fake_client,
+            guard=ReadOnlyTelegramGuard(),
+            new_message_event_factory=FakeNewMessageEvent,
+        )
+
+        async def handler(update):
+            return None
+
+        asyncio.run(client.listen_new_messages(handler))
+        asyncio.run(client.run_until_disconnected())
+
+        self.assertEqual(len(fake_client.event_handlers), 1)
+        self.assertIs(fake_client.event_handlers[0][0], handler)
+        self.assertIsInstance(fake_client.event_handlers[0][1], FakeNewMessageEvent)
+        self.assertEqual(
+            fake_client.calls[-2:],
+            [("add_event_handler", "FakeNewMessageEvent"), ("run_until_disconnected",)],
+        )
+
     def test_mutating_call_is_rejected_before_fake_client_is_called(self):
         fake_client = FakeTelegramClient()
         client = ReadOnlyIngestionClient(fake_client)
@@ -212,6 +248,38 @@ class TelethonIngestionAdapterTests(unittest.TestCase):
             asyncio.run(adapter.call("send_message", 1001, "hello"))
 
         self.assertEqual(fake_client.calls, [])
+
+    def test_telethon_adapter_loads_new_message_event_factory(self):
+        from telegram_ai_assistant.ingestion import telethon_adapter
+
+        original_loader = telethon_adapter._load_telegram_client
+        original_event_loader = telethon_adapter._load_new_message_event
+        FakeTelethonClient.instances = []
+
+        class FakeLoadedNewMessageEvent:
+            pass
+
+        telethon_adapter._load_telegram_client = lambda: FakeTelethonClient
+        telethon_adapter._load_new_message_event = lambda: FakeLoadedNewMessageEvent
+        try:
+            adapter = asyncio.run(
+                TelethonIngestionAdapter.connect(
+                    "session-name",
+                    123,
+                    "hash",
+                )
+            )
+        finally:
+            telethon_adapter._load_telegram_client = original_loader
+            telethon_adapter._load_new_message_event = original_event_loader
+
+        async def handler(update):
+            return None
+
+        asyncio.run(adapter.listen_new_messages(handler))
+
+        fake_client = FakeTelethonClient.instances[0]
+        self.assertEqual(fake_client.calls[-1], ("add_event_handler", "FakeLoadedNewMessageEvent"))
 
 
 if __name__ == "__main__":
