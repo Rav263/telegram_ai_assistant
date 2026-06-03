@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping
 
 
@@ -27,9 +28,22 @@ class Settings:
     telegram_ingest_debug_messages: bool = False
     telegram_ingest_bootstrap_mode: str = "recent"
     telegram_ingest_bootstrap_days: int = 30
+    telegram_backfill_chat_id: int = 0
+    telegram_backfill_start_at: datetime | None = None
+    telegram_backfill_end_at: datetime | None = None
+    telegram_backfill_limit: int = 500
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
+        telegram_backfill_start_at = _optional_datetime(env, "TELEGRAM_BACKFILL_START_AT")
+        telegram_backfill_end_at = _optional_datetime(env, "TELEGRAM_BACKFILL_END_AT")
+        if (
+            telegram_backfill_start_at is not None
+            and telegram_backfill_end_at is not None
+            and telegram_backfill_end_at <= telegram_backfill_start_at
+        ):
+            raise ConfigError("TELEGRAM_BACKFILL_END_AT must be after TELEGRAM_BACKFILL_START_AT")
+
         return cls(
             telegram_api_id=_required_int(env, "TELEGRAM_API_ID"),
             telegram_api_hash=_required(env, "TELEGRAM_API_HASH"),
@@ -59,6 +73,14 @@ class Settings:
                 env,
                 "TELEGRAM_INGEST_BOOTSTRAP_DAYS",
                 cls.telegram_ingest_bootstrap_days,
+            ),
+            telegram_backfill_chat_id=_optional_int(env, "TELEGRAM_BACKFILL_CHAT_ID", 0),
+            telegram_backfill_start_at=telegram_backfill_start_at,
+            telegram_backfill_end_at=telegram_backfill_end_at,
+            telegram_backfill_limit=_optional_positive_int(
+                env,
+                "TELEGRAM_BACKFILL_LIMIT",
+                cls.telegram_backfill_limit,
             ),
         )
 
@@ -121,3 +143,16 @@ def _optional_positive_int(env: Mapping[str, str], name: str, default: int) -> i
     if value <= 0:
         raise ConfigError(f"setting must be a positive integer: {name}")
     return value
+
+
+def _optional_datetime(env: Mapping[str, str], name: str) -> datetime | None:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ConfigError(f"setting must be an ISO datetime: {name}") from exc
+    if parsed.tzinfo is None:
+        raise ConfigError(f"setting must include timezone: {name}")
+    return parsed

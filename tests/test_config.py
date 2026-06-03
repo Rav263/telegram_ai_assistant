@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.config import ConfigError, Settings
@@ -30,6 +31,10 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(settings.telegram_ingest_debug_messages)
         self.assertEqual(settings.telegram_ingest_bootstrap_mode, "recent")
         self.assertEqual(settings.telegram_ingest_bootstrap_days, 30)
+        self.assertEqual(settings.telegram_backfill_chat_id, 0)
+        self.assertIsNone(settings.telegram_backfill_start_at)
+        self.assertIsNone(settings.telegram_backfill_end_at)
+        self.assertEqual(settings.telegram_backfill_limit, 500)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.backfill_days, 30)
@@ -43,6 +48,10 @@ class SettingsTests(unittest.TestCase):
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
             "TELEGRAM_INGEST_BOOTSTRAP_MODE": "start_now",
             "TELEGRAM_INGEST_BOOTSTRAP_DAYS": "7",
+            "TELEGRAM_BACKFILL_CHAT_ID": "380453832",
+            "TELEGRAM_BACKFILL_START_AT": "2022-01-01T00:00:00+00:00",
+            "TELEGRAM_BACKFILL_END_AT": "2022-02-01T00:00:00+00:00",
+            "TELEGRAM_BACKFILL_LIMIT": "250",
         }
 
         settings = Settings.from_env(env)
@@ -53,6 +62,16 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(settings.telegram_ingest_debug_messages)
         self.assertEqual(settings.telegram_ingest_bootstrap_mode, "start_now")
         self.assertEqual(settings.telegram_ingest_bootstrap_days, 7)
+        self.assertEqual(settings.telegram_backfill_chat_id, 380453832)
+        self.assertEqual(
+            settings.telegram_backfill_start_at,
+            datetime(2022, 1, 1, 0, 0, tzinfo=UTC),
+        )
+        self.assertEqual(
+            settings.telegram_backfill_end_at,
+            datetime(2022, 2, 1, 0, 0, tzinfo=UTC),
+        )
+        self.assertEqual(settings.telegram_backfill_limit, 250)
 
     def test_raises_when_required_setting_is_missing(self):
         env = dict(VALID_ENV)
@@ -122,6 +141,35 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "TELEGRAM_INGEST_BOOTSTRAP_DAYS": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_backfill_datetime_is_invalid(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_BACKFILL_START_AT": "not-a-date",
+            "TELEGRAM_BACKFILL_END_AT": "2022-02-01T00:00:00+00:00",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_backfill_end_is_not_after_start(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_BACKFILL_START_AT": "2022-02-01T00:00:00+00:00",
+            "TELEGRAM_BACKFILL_END_AT": "2022-01-01T00:00:00+00:00",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_backfill_limit_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_BACKFILL_LIMIT": "0",
         }
 
         with self.assertRaises(ConfigError):
