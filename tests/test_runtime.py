@@ -6,8 +6,15 @@ import unittest
 
 from telegram_ai_assistant.config import Settings
 from telegram_ai_assistant.domain import MessageDirection
+from telegram_ai_assistant.ingestion.backfill import BackfillRunResult
 from telegram_ai_assistant.ingestion.live import IngestedMessageDebug, IngestionRunResult
-from telegram_ai_assistant.runtime import PROCESS_NAMES, offline_health_report, run_ingestor, run_process
+from telegram_ai_assistant.runtime import (
+    PROCESS_NAMES,
+    offline_health_report,
+    run_backfill,
+    run_ingestor,
+    run_process,
+)
 
 
 class RuntimeTests(unittest.TestCase):
@@ -25,7 +32,10 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls, [settings])
 
     def test_all_declared_processes_have_default_runners(self):
-        self.assertEqual(PROCESS_NAMES, ("ingestor", "worker", "bot", "scheduler", "all"))
+        self.assertEqual(
+            PROCESS_NAMES,
+            ("ingestor", "backfill", "worker", "bot", "scheduler", "all"),
+        )
 
     def test_offline_health_report_contains_core_components(self):
         report = offline_health_report()
@@ -122,6 +132,54 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("ingestor failed", output.getvalue())
         self.assertNotIn("secret-token", output.getvalue())
 
+    def test_run_backfill_executes_context_and_prints_result(self):
+        calls = []
+
+        class FakeContext:
+            async def run_backfill_once(self):
+                calls.append("run")
+                return BackfillRunResult(
+                    account_id="owner",
+                    chat_id=1001,
+                    start_at=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
+                    end_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+                    requested_before_message_id=None,
+                    next_before_message_id=900,
+                    saved_count=3,
+                    oldest_sent_at=datetime(2026, 5, 2, 9, 1, tzinfo=UTC),
+                    newest_sent_at=datetime(2026, 5, 31, 9, 2, tzinfo=UTC),
+                )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_backfill(make_settings(), context_factory=lambda settings: FakeContext())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["run"])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["account_id"], "owner")
+        self.assertEqual(payload["chat_id"], 1001)
+        self.assertEqual(payload["start_at"], "2026-05-01T00:00:00+00:00")
+        self.assertEqual(payload["end_at"], "2026-06-01T00:00:00+00:00")
+        self.assertIsNone(payload["requested_before_message_id"])
+        self.assertEqual(payload["next_before_message_id"], 900)
+        self.assertEqual(payload["saved_count"], 3)
+        self.assertEqual(payload["oldest_sent_at"], "2026-05-02T09:01:00+00:00")
+        self.assertEqual(payload["newest_sent_at"], "2026-05-31T09:02:00+00:00")
+
+    def test_run_backfill_failure_returns_nonzero_without_secret_values(self):
+        class FailingContext:
+            async def run_backfill_once(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_backfill(make_settings(), context_factory=lambda settings: FailingContext())
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("backfill failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+
 
 def make_settings() -> Settings:
     return Settings(
@@ -133,6 +191,9 @@ def make_settings() -> Settings:
         telegram_session_path=".local/telegram-owner.session",
         telegram_ingest_account_id="owner",
         telegram_ingest_chat_id=1001,
+        telegram_backfill_chat_id=1001,
+        telegram_backfill_start_at=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
+        telegram_backfill_end_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
     )
 
 

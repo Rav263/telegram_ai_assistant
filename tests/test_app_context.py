@@ -1,8 +1,10 @@
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.app_context import AppContext
-from telegram_ai_assistant.config import Settings
+from telegram_ai_assistant.config import ConfigError, Settings
 
 
 class FakeConnectionFactory:
@@ -81,6 +83,48 @@ class AppContextTests(unittest.TestCase):
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
 
+    def test_run_backfill_once_builds_service_with_settings(self):
+        factory = FakeConnectionFactory()
+        captured = {}
+
+        class FakeBackfillService:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            async def run_once(self):
+                return "result"
+
+        context = AppContext(
+            settings=make_settings(),
+            connection_factory=factory,
+            backfill_factory=FakeBackfillService,
+            telegram_client_factory=lambda settings: "client-factory",
+        )
+
+        result = asyncio.run(context.run_backfill_once())
+
+        self.assertEqual(result, "result")
+        self.assertEqual(captured["account_id"], "owner")
+        self.assertEqual(captured["chat_id"], 1001)
+        self.assertEqual(captured["start_at"], datetime(2026, 5, 1, 0, 0, tzinfo=UTC))
+        self.assertEqual(captured["end_at"], datetime(2026, 6, 1, 0, 0, tzinfo=UTC))
+        self.assertIsNone(captured["before_message_id"])
+        self.assertEqual(captured["limit"], 500)
+        self.assertIs(captured["connection_factory"], factory)
+        self.assertEqual(captured["client_factory"], "client-factory")
+
+    def test_run_backfill_once_requires_backfill_window_settings(self):
+        factory = FakeConnectionFactory()
+        context = AppContext(
+            settings=replace(make_settings(), telegram_backfill_start_at=None),
+            connection_factory=factory,
+        )
+
+        with self.assertRaises(ConfigError):
+            asyncio.run(context.run_backfill_once())
+
+        self.assertEqual(factory.opened, 0)
+
 
 def make_settings() -> Settings:
     return Settings(
@@ -92,6 +136,9 @@ def make_settings() -> Settings:
         telegram_session_path=".local/telegram-owner.session",
         telegram_ingest_account_id="owner",
         telegram_ingest_chat_id=1001,
+        telegram_backfill_chat_id=1001,
+        telegram_backfill_start_at=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
+        telegram_backfill_end_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
     )
 
 

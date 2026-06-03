@@ -27,6 +27,12 @@ class CLITests(unittest.TestCase):
         self.assertEqual(args.command, "run")
         self.assertEqual(args.process, "worker")
 
+    def test_parses_run_backfill_command(self):
+        args = build_parser().parse_args(["run", "backfill"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.process, "backfill")
+
     def test_parses_health_offline_command(self):
         args = build_parser().parse_args(["health", "--offline"])
 

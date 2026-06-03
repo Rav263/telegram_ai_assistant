@@ -8,10 +8,11 @@ from typing import Any
 from .app_context import AppContext
 from .config import Settings
 from .health import ComponentHealth, HealthChecker, HealthReport, HealthStatus
+from .ingestion.backfill import BackfillRunResult
 from .ingestion.live import IngestionRunResult
 
 
-PROCESS_NAMES = ("ingestor", "worker", "bot", "scheduler", "all")
+PROCESS_NAMES = ("ingestor", "backfill", "worker", "bot", "scheduler", "all")
 Runner = Callable[[Settings], int]
 
 
@@ -37,6 +38,16 @@ def run_ingestor(settings: Settings, *, context_factory=AppContext.from_settings
     return 0
 
 
+def run_backfill(settings: Settings, *, context_factory=AppContext.from_settings) -> int:
+    try:
+        result = asyncio.run(context_factory(settings).run_backfill_once())
+    except Exception as exc:
+        print(f"backfill failed: {type(exc).__name__}")
+        return 1
+    print(json.dumps(_backfill_result_payload(result), ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def run_worker(settings: Settings) -> int:
     return 0
 
@@ -57,6 +68,7 @@ def run_all(settings: Settings) -> int:
 
 DEFAULT_RUNNERS: Mapping[str, Runner] = {
     "ingestor": run_ingestor,
+    "backfill": run_backfill,
     "worker": run_worker,
     "bot": run_bot,
     "scheduler": run_scheduler,
@@ -75,6 +87,23 @@ def offline_health_report() -> HealthReport:
         }
     )
     return checker.check()
+
+
+def _backfill_result_payload(result: BackfillRunResult) -> dict[str, Any]:
+    payload = {
+        "account_id": result.account_id,
+        "chat_id": result.chat_id,
+        "start_at": result.start_at.isoformat(),
+        "end_at": result.end_at.isoformat(),
+        "requested_before_message_id": result.requested_before_message_id,
+        "next_before_message_id": result.next_before_message_id,
+        "saved_count": result.saved_count,
+    }
+    if result.oldest_sent_at is not None:
+        payload["oldest_sent_at"] = result.oldest_sent_at.isoformat()
+    if result.newest_sent_at is not None:
+        payload["newest_sent_at"] = result.newest_sent_at.isoformat()
+    return payload
 
 
 def _ingestion_result_payload(result: IngestionRunResult) -> dict[str, Any]:

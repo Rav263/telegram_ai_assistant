@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .config import Settings
+from .config import ConfigError, Settings
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
 from .health import HealthChecker, HealthReport, lm_studio_health_check, postgres_health_check
+from .ingestion.backfill import BackfillService
 from .ingestion.live import LiveIngestor
 from .ingestion.telethon_adapter import TelethonIngestionAdapter
 
@@ -29,6 +30,7 @@ class AppContext:
     schema_applier: SchemaApplier = apply_schema
     health_transport: Callable[[str], bytes] | None = None
     ingestor_factory: Any = LiveIngestor
+    backfill_factory: Any = BackfillService
     telegram_client_factory: Callable[[Settings], Any] = default_telegram_client_factory
 
     @classmethod
@@ -74,3 +76,25 @@ class AppContext:
             client_factory=self.telegram_client_factory(self.settings),
         )
         return await ingestor.run_once()
+
+    async def run_backfill_once(self):
+        start_at = self.settings.telegram_backfill_start_at
+        end_at = self.settings.telegram_backfill_end_at
+        if self.settings.telegram_backfill_chat_id == 0:
+            raise ConfigError("missing required setting: TELEGRAM_BACKFILL_CHAT_ID")
+        if start_at is None:
+            raise ConfigError("missing required setting: TELEGRAM_BACKFILL_START_AT")
+        if end_at is None:
+            raise ConfigError("missing required setting: TELEGRAM_BACKFILL_END_AT")
+
+        backfill = self.backfill_factory(
+            account_id=self.settings.telegram_ingest_account_id,
+            chat_id=self.settings.telegram_backfill_chat_id,
+            start_at=start_at,
+            end_at=end_at,
+            before_message_id=None,
+            limit=self.settings.telegram_backfill_limit,
+            connection_factory=self.connection_factory,
+            client_factory=self.telegram_client_factory(self.settings),
+        )
+        return await backfill.run_once()
