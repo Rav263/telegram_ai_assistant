@@ -24,3 +24,5 @@
 - Added opt-in ingestor debug output for saved message text and captions.
 - Added bounded live ingestion bootstrap modes for recent import and start-from-now backlog skipping.
 - Added one-shot Telegram backfill command for explicit chat/date-range imports without moving the live cursor.
+- Added live Telegram update listener with chat/channel allow-deny policy.
+- Added Docker production runtime for the listener and Postgres.

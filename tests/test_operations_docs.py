@@ -35,6 +35,12 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("TELEGRAM_BACKFILL_END_AT", text)
         self.assertIn("TELEGRAM_BACKFILL_LIMIT", text)
         self.assertIn("telegram-ai-assistant run backfill", text)
+        self.assertIn("TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS", text)
+        self.assertIn("TELEGRAM_LISTENER_DENIED_CHAT_IDS", text)
+        self.assertIn("telegram-ai-assistant run listener", text)
+        self.assertIn("docker compose up -d postgres app-listener", text)
+        self.assertIn("docker compose run --rm app-listener telegram-ai-assistant migrate", text)
+        self.assertIn("docker compose run --rm app-listener telegram-ai-assistant health", text)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,8 @@ TELEGRAM_BACKFILL_CHAT_ID=123456789
 TELEGRAM_BACKFILL_START_AT=2022-01-01T00:00:00+00:00
 TELEGRAM_BACKFILL_END_AT=2022-02-01T00:00:00+00:00
 TELEGRAM_BACKFILL_LIMIT=500
+TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS=
+TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
@@ -48,6 +50,7 @@ BACKFILL_DAYS=30
 - Postgres stores messages, candidates, extracted items, status events, bot actions, and backfill jobs.
 - LM Studio serves the local OpenAI-compatible LLM endpoint.
 - `telegram-ai-assistant run ingestor` reads Telegram updates through the read-only ingestion adapter.
+- `telegram-ai-assistant run listener` saves new Telegram messages from live updates.
 - `telegram-ai-assistant run worker` processes candidates and extraction batches.
 - `telegram-ai-assistant run bot` serves owner-only Telegram Bot API commands.
 - `telegram-ai-assistant run scheduler` drives retries, backfill, and periodic processing.
@@ -73,6 +76,18 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run ingestor
 The command prints JSON with `saved_count`, `requested_min_id`, `latest_message_id`, `bootstrap_mode`, and optional `oldest_sent_at`/`newest_sent_at` period bounds. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
 
 Set `TELEGRAM_INGEST_DEBUG_MESSAGES=true` only for local troubleshooting when you need the command output to include `debug_messages` with saved message IDs, sender IDs, direction, timestamp, text, and caption. Turn it back off after debugging so routine logs do not contain private message text.
+
+## Listener
+
+Use `telegram-ai-assistant run listener` for live update ingestion. It listens for new Telegram messages and saves accepted updates without intentionally marking messages read.
+
+By default the listener reads private chats, basic groups, and supergroups. Broadcast channels are ignored unless their ids are listed in `TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS`. Any id in `TELEGRAM_LISTENER_DENIED_CHAT_IDS` is never read.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run listener
+```
+
+Keep `run ingestor` available as cursor catch-up after the machine sleeps or the listener is stopped.
 
 ## Backfill
 
@@ -112,6 +127,34 @@ Use online health after Postgres and LM Studio are running. It checks Postgres w
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli health
 ```
+
+## Docker
+
+Build and start the production listener stack:
+
+```bash
+docker compose up -d postgres app-listener
+```
+
+Run migrations in the same image:
+
+```bash
+docker compose run --rm app-listener telegram-ai-assistant migrate
+```
+
+Run one-shot backfill in the same image:
+
+```bash
+docker compose run --rm app-listener telegram-ai-assistant run backfill
+```
+
+Run health in the same image:
+
+```bash
+docker compose run --rm app-listener telegram-ai-assistant health
+```
+
+On macOS, use `LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1` when LM Studio runs on the host. On Linux, set `LM_STUDIO_BASE_URL` to a host address reachable from the container.
 
 ## Tests
 
