@@ -5,6 +5,7 @@ import unittest
 
 from telegram_ai_assistant.app_context import AppContext
 from telegram_ai_assistant.config import ConfigError, Settings
+from telegram_ai_assistant.worker import WorkerResult
 
 
 class FakeConnectionFactory:
@@ -156,6 +157,46 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["policy"].denied_chat_ids, frozenset({1002}))
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
+
+    def test_run_worker_once_builds_worker_with_repositories_and_settings(self):
+        factory = FakeConnectionFactory()
+        captured = {}
+
+        class FakeWorker:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def process_messages(self, *, limit):
+                captured["message_limit"] = limit
+                return WorkerResult(scored_messages=2, queued_candidates=1)
+
+            def process_candidates(self, *, limit):
+                captured["candidate_limit"] = limit
+                return WorkerResult(processed_candidates=1, extracted_items=1, saved_items=1)
+
+        context = AppContext(
+            settings=make_settings(),
+            connection_factory=factory,
+            worker_factory=FakeWorker,
+            lm_studio_client_factory=lambda settings: "llm-client",
+        )
+
+        result = context.run_worker_once()
+
+        self.assertEqual(result.scored_messages, 2)
+        self.assertEqual(result.queued_candidates, 1)
+        self.assertEqual(result.processed_candidates, 1)
+        self.assertEqual(result.extracted_items, 1)
+        self.assertEqual(result.saved_items, 1)
+        self.assertEqual(captured["message_limit"], 25)
+        self.assertEqual(captured["candidate_limit"], 25)
+        self.assertEqual(captured["item_auto_apply_threshold"], 0.8)
+        self.assertEqual(captured["status_auto_apply_threshold"], 0.8)
+        self.assertEqual(captured["extraction_service"]._llm_client, "llm-client")
+        self.assertEqual(captured["message_source"].__class__.__name__, "MessageProcessingRepository")
+        self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
+        self.assertEqual(factory.opened, 1)
+        self.assertTrue(factory.connection_obj.exited)
 
 
 def make_settings() -> Settings:

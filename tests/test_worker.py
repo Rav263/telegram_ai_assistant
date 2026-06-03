@@ -91,6 +91,14 @@ class FakeLLMRunRepository:
         self.failures.append(type(error).__name__)
 
 
+class FakeRuntimeEventRepository:
+    def __init__(self):
+        self.events = []
+
+    def record_event(self, **kwargs):
+        self.events.append(kwargs)
+
+
 class ExtractionResult:
     def __init__(self, items=(), status_changes=()):
         self.items = tuple(items)
@@ -213,16 +221,23 @@ class WorkerTests(unittest.TestCase):
     def test_records_lm_failure_without_acknowledging_candidate(self):
         candidate_repository = FakeCandidateRepository(candidate_messages=[make_message("перезвоню")])
         llm_runs = FakeLLMRunRepository()
+        runtime_events = FakeRuntimeEventRepository()
         worker = Worker(
             candidate_repository=candidate_repository,
             extraction_service=FakeExtractionService(error=RuntimeError("LM Studio unavailable")),
             llm_run_repository=llm_runs,
+            runtime_event_repository=runtime_events,
         )
 
         result = worker.process_candidates(limit=10)
 
         self.assertEqual(result.failures, 1)
         self.assertEqual(llm_runs.failures, ["RuntimeError"])
+        self.assertEqual(runtime_events.events[0]["component"], "worker")
+        self.assertEqual(runtime_events.events[0]["severity"], "warning")
+        self.assertEqual(runtime_events.events[0]["event_type"], "llm_failure")
+        self.assertEqual(runtime_events.events[0]["metadata"]["error_type"], "RuntimeError")
+        self.assertNotIn("LM Studio unavailable", str(runtime_events.events))
         self.assertEqual(candidate_repository.acknowledged, [])
 
 

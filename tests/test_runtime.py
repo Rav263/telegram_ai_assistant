@@ -16,7 +16,9 @@ from telegram_ai_assistant.runtime import (
     run_ingestor,
     run_listener,
     run_process,
+    run_worker,
 )
+from telegram_ai_assistant.worker import WorkerResult
 
 
 class RuntimeTests(unittest.TestCase):
@@ -271,6 +273,86 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("listener started", log_output)
         self.assertIn("listener stopped", log_output)
+
+    def test_run_worker_once_executes_context_and_prints_result(self):
+        calls = []
+
+        class FakeContext:
+            def run_worker_once(self):
+                calls.append("run")
+                return WorkerResult(
+                    scored_messages=2,
+                    queued_candidates=1,
+                    processed_candidates=1,
+                    extracted_items=1,
+                    saved_items=1,
+                    review_items=0,
+                    review_status_changes=0,
+                    failures=0,
+                )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_worker(
+                make_settings(),
+                once=True,
+                context_factory=lambda settings: FakeContext(),
+            )
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["run"])
+        self.assertEqual(payload["process"], "worker")
+        self.assertEqual(payload["scored_messages"], 2)
+        self.assertEqual(payload["queued_candidates"], 1)
+        self.assertEqual(payload["processed_candidates"], 1)
+        self.assertEqual(payload["saved_items"], 1)
+
+    def test_run_worker_daemon_repeats_until_stop_requested_without_stdout(self):
+        calls = []
+        sleeps = []
+
+        class FakeContext:
+            def run_worker_once(self):
+                calls.append("run")
+                return WorkerResult(scored_messages=1)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_worker(
+                make_settings(),
+                once=False,
+                context_factory=lambda settings: FakeContext(),
+                sleep=sleeps.append,
+                stop_requested=lambda: len(calls) >= 2,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["run", "run"])
+        self.assertEqual(sleeps, [10])
+        self.assertEqual(output.getvalue(), "")
+
+    def test_run_worker_failure_returns_nonzero_without_secret_values(self):
+        class FailingContext:
+            def run_worker_once(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR") as logs:
+            with redirect_stdout(output):
+                exit_code = run_worker(
+                    make_settings(),
+                    once=True,
+                    context_factory=lambda settings: FailingContext(),
+                )
+
+        log_output = "\n".join(logs.output)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("worker failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("worker failed", log_output)
+        self.assertIn("RuntimeError", log_output)
+        self.assertNotIn("secret-token", log_output)
 
 
 def make_settings() -> Settings:

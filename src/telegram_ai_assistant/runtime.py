@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -87,8 +88,67 @@ def run_listener(settings: Settings, *, context_factory=AppContext.from_settings
     return 0
 
 
-def run_worker(settings: Settings, *, once: bool = False) -> int:
-    return 0
+def run_worker(
+    settings: Settings,
+    *,
+    once: bool = False,
+    context_factory=AppContext.from_settings,
+    sleep: Callable[[float], None] = time.sleep,
+    stop_requested: Callable[[], bool] | None = None,
+) -> int:
+    mode = "once" if once else "daemon"
+    logger.info("worker started account_id=%s mode=%s", settings.telegram_ingest_account_id, mode)
+    return _run_worker_loop(
+        settings,
+        once=once,
+        context_factory=context_factory,
+        sleep=sleep,
+        stop_requested=stop_requested,
+    )
+
+
+def _run_worker_loop(
+    settings: Settings,
+    *,
+    once: bool,
+    context_factory=AppContext.from_settings,
+    sleep: Callable[[float], None] = time.sleep,
+    stop_requested: Callable[[], bool] | None = None,
+) -> int:
+    context = context_factory(settings)
+    while True:
+        try:
+            result = context.run_worker_once()
+        except KeyboardInterrupt:
+            logger.info("worker stopped account_id=%s reason=interrupt", settings.telegram_ingest_account_id)
+            return 0
+        except Exception as exc:
+            logger.error("worker failed exception_type=%s", type(exc).__name__)
+            print(f"worker failed: {type(exc).__name__}")
+            return 1
+
+        logger.info(
+            (
+                "worker cycle completed scored_messages=%s queued_candidates=%s "
+                "processed_candidates=%s extracted_items=%s saved_items=%s "
+                "review_items=%s review_status_changes=%s failures=%s"
+            ),
+            result.scored_messages,
+            result.queued_candidates,
+            result.processed_candidates,
+            result.extracted_items,
+            result.saved_items,
+            result.review_items,
+            result.review_status_changes,
+            result.failures,
+        )
+        if once:
+            print(json.dumps(_worker_result_payload(result), ensure_ascii=False, sort_keys=True))
+            return 0
+        if stop_requested is not None and stop_requested():
+            logger.info("worker stopped account_id=%s reason=stop_requested", settings.telegram_ingest_account_id)
+            return 0
+        sleep(settings.worker_poll_interval_seconds)
 
 
 def run_bot(settings: Settings) -> int:
@@ -180,3 +240,17 @@ def _ingestion_result_payload(result: IngestionRunResult) -> dict[str, Any]:
             for message in result.debug_messages
         ]
     return payload
+
+
+def _worker_result_payload(result: Any) -> dict[str, Any]:
+    return {
+        "process": "worker",
+        "scored_messages": result.scored_messages,
+        "queued_candidates": result.queued_candidates,
+        "processed_candidates": result.processed_candidates,
+        "extracted_items": result.extracted_items,
+        "saved_items": result.saved_items,
+        "review_items": result.review_items,
+        "review_status_changes": result.review_status_changes,
+        "failures": result.failures,
+    }

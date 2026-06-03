@@ -29,6 +29,7 @@ class Worker:
         item_repository: Any | None = None,
         review_repository: Any | None = None,
         llm_run_repository: Any | None = None,
+        runtime_event_repository: Any | None = None,
         scorer: Callable[[Any], Any] = score_message,
         item_auto_apply_threshold: float = 0.8,
         status_auto_apply_threshold: float = 0.8,
@@ -39,6 +40,7 @@ class Worker:
         self.item_repository = item_repository
         self.review_repository = review_repository
         self.llm_run_repository = llm_run_repository
+        self.runtime_event_repository = runtime_event_repository
         self.scorer = scorer
         self.item_auto_apply_threshold = item_auto_apply_threshold
         self.status_auto_apply_threshold = status_auto_apply_threshold
@@ -87,6 +89,17 @@ class Worker:
         except Exception as exc:
             if self.llm_run_repository is not None:
                 self.llm_run_repository.record_failure(exc)
+            if self.runtime_event_repository is not None:
+                self.runtime_event_repository.record_event(
+                    component="worker",
+                    severity="warning",
+                    event_type="llm_failure",
+                    message="LLM batch failed",
+                    metadata={
+                        "error_type": type(exc).__name__,
+                        "candidate_count": len(candidate_messages),
+                    },
+                )
             return WorkerResult(processed_candidates=0, failures=1)
 
         saved_items = 0

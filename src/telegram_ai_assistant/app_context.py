@@ -6,12 +6,23 @@ from typing import Any, Callable, Mapping
 from .config import ConfigError, Settings
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
+from .db.repositories import (
+    CandidateRepository,
+    ItemRepository,
+    LLMRunRepository,
+    MessageProcessingRepository,
+    ReviewRepository,
+    RuntimeEventRepository,
+)
+from .extraction import ExtractionService
 from .health import HealthChecker, HealthReport, lm_studio_health_check, postgres_health_check
 from .ingestion.backfill import BackfillService
 from .ingestion.chat_policy import ChatIngestionPolicy
 from .ingestion.listener import LiveUpdateListener
 from .ingestion.live import LiveIngestor
 from .ingestion.telethon_adapter import TelethonIngestionAdapter
+from .llm_client import LMStudioClient
+from .worker import Worker, WorkerResult
 
 
 SchemaApplier = Callable[[Any], None]
@@ -25,6 +36,14 @@ def default_telegram_client_factory(settings: Settings):
     )
 
 
+def default_lm_studio_client_factory(settings: Settings):
+    return LMStudioClient(
+        base_url=settings.lm_studio_base_url,
+        model=settings.lm_studio_model,
+        timeout=settings.lm_studio_timeout_seconds,
+    )
+
+
 @dataclass(frozen=True)
 class AppContext:
     settings: Settings
@@ -34,7 +53,10 @@ class AppContext:
     ingestor_factory: Any = LiveIngestor
     backfill_factory: Any = BackfillService
     listener_factory: Any = LiveUpdateListener
+    worker_factory: Any = Worker
+    extraction_service_factory: Any = ExtractionService
     telegram_client_factory: Callable[[Settings], Any] = default_telegram_client_factory
+    lm_studio_client_factory: Callable[[Settings], Any] = default_lm_studio_client_factory
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "AppContext":
@@ -113,3 +135,43 @@ class AppContext:
             ),
         )
         return await listener.run_forever()
+
+    def run_worker_once(self) -> WorkerResult:
+        with self.connection_factory.connection() as connection:
+            extraction_service = self.extraction_service_factory(
+                llm_client=self.lm_studio_client_factory(self.settings),
+            )
+            worker = self.worker_factory(
+                message_source=MessageProcessingRepository(connection),
+                candidate_repository=CandidateRepository(connection),
+                extraction_service=extraction_service,
+                item_repository=ItemRepository(
+                    connection,
+                    account_id=self.settings.telegram_ingest_account_id,
+                ),
+                review_repository=ReviewRepository(
+                    connection,
+                    account_id=self.settings.telegram_ingest_account_id,
+                ),
+                llm_run_repository=LLMRunRepository(connection),
+                runtime_event_repository=RuntimeEventRepository(connection),
+                item_auto_apply_threshold=self.settings.worker_item_auto_apply_threshold,
+                status_auto_apply_threshold=self.settings.worker_status_auto_apply_threshold,
+            )
+            return merge_worker_results(
+                worker.process_messages(limit=self.settings.worker_batch_size),
+                worker.process_candidates(limit=self.settings.worker_batch_size),
+            )
+
+
+def merge_worker_results(*results: WorkerResult) -> WorkerResult:
+    return WorkerResult(
+        scored_messages=sum(result.scored_messages for result in results),
+        queued_candidates=sum(result.queued_candidates for result in results),
+        processed_candidates=sum(result.processed_candidates for result in results),
+        extracted_items=sum(result.extracted_items for result in results),
+        saved_items=sum(result.saved_items for result in results),
+        review_items=sum(result.review_items for result in results),
+        review_status_changes=sum(result.review_status_changes for result in results),
+        failures=sum(result.failures for result in results),
+    )
