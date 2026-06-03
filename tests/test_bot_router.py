@@ -62,6 +62,10 @@ class FakeBotServices:
         self.calls.append(("logs",))
         return "logs response"
 
+    def help(self) -> str:
+        self.calls.append(("help",))
+        return "help response"
+
     def handle_review_callback(self, action: str, item_id: str) -> str:
         self.calls.append(("review_callback", action, item_id))
         return "review callback response"
@@ -135,6 +139,30 @@ class BotRouterTests(unittest.TestCase):
 
                 self.assertEqual(services.calls, [expected_call])
                 self.assertEqual(bot.sent_messages[0], (123, f"{expected_call[0]} response", None))
+
+    def test_start_and_help_dispatch_to_help_service(self):
+        for command in ("/start", "/help"):
+            with self.subTest(command=command):
+                services = FakeBotServices()
+                bot = FakeBotApi()
+                router = BotRouter(
+                    access=BotAccessController(allowed_user_id=100),
+                    bot_api=bot,
+                    services=services,
+                )
+
+                router.handle_update(
+                    {
+                        "message": {
+                            "from": {"id": 100},
+                            "chat": {"id": 123},
+                            "text": command,
+                        }
+                    }
+                )
+
+                self.assertEqual(services.calls, [("help",)])
+                self.assertEqual(bot.sent_messages[0], (123, "help response", None))
 
     def test_owner_command_can_send_response_markup(self):
         class MarkupServices(FakeBotServices):
@@ -211,6 +239,46 @@ class BotRouterTests(unittest.TestCase):
 
                 self.assertEqual(services.calls, [expected_call])
                 self.assertEqual(bot.answered_callbacks[0], ("callback-1", expected_answer, False))
+
+    def test_menu_callbacks_dispatch_to_command_services_and_send_message(self):
+        callback_cases = {
+            "menu:summary:0": ("summary", "summary response"),
+            "menu:tasks:0": ("tasks", "tasks response"),
+            "menu:review:0": ("review", "review response"),
+            "menu:backfill:0": ("backfill", "backfill response"),
+            "menu:health:0": ("health", "health response"),
+            "menu:logs:0": ("logs", "logs response"),
+            "menu:settings:0": ("settings", "settings response"),
+            "menu:help:0": ("help", "help response"),
+        }
+
+        for callback_data, (expected_method, expected_text) in callback_cases.items():
+            with self.subTest(callback_data=callback_data):
+                services = FakeBotServices()
+                bot = FakeBotApi()
+                router = BotRouter(
+                    access=BotAccessController(allowed_user_id=100),
+                    bot_api=bot,
+                    services=services,
+                )
+
+                router.handle_update(
+                    {
+                        "callback_query": {
+                            "id": "callback-1",
+                            "from": {"id": 100},
+                            "message": {
+                                "chat": {"id": 123},
+                                "message_id": 456,
+                            },
+                            "data": callback_data,
+                        }
+                    }
+                )
+
+                self.assertEqual(services.calls, [(expected_method,)])
+                self.assertEqual(bot.answered_callbacks[0], ("callback-1", "Opened.", False))
+                self.assertEqual(bot.sent_messages[0][1], expected_text)
 
 
 if __name__ == "__main__":

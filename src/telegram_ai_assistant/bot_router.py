@@ -7,6 +7,8 @@ from .security import BotAccessController
 
 
 COMMANDS = {
+    "/start": "help",
+    "/help": "help",
     "/summary": "summary",
     "/tasks": "tasks",
     "/review": "review",
@@ -73,7 +75,9 @@ class BotRouter:
             return
 
         kind, action, target_id = parts
-        if kind == "review":
+        if kind == "menu":
+            self._handle_menu_callback(callback_query=callback_query, callback_id=callback_id, action=action)
+        elif kind == "review":
             answer_text = str(self.services.handle_review_callback(action, target_id))
         elif kind == "status":
             answer_text = str(self.services.handle_status_callback(action, target_id))
@@ -82,7 +86,31 @@ class BotRouter:
         else:
             return
 
-        self.bot_api.answer_callback_query(callback_query_id=callback_id, text=answer_text)
+        if kind != "menu":
+            self.bot_api.answer_callback_query(callback_query_id=callback_id, text=answer_text)
+
+    def _handle_menu_callback(self, *, callback_query: Mapping[str, Any], callback_id: str, action: str) -> None:
+        method_name = {
+            "summary": "summary",
+            "tasks": "tasks",
+            "review": "review",
+            "backfill": "backfill",
+            "health": "health",
+            "logs": "logs",
+            "settings": "settings",
+            "help": "help",
+        }.get(action)
+        if method_name is None:
+            return
+
+        response = getattr(self.services, method_name)()
+        if callback_id:
+            self.bot_api.answer_callback_query(callback_query_id=callback_id, text="Opened.")
+
+        message = callback_query.get("message", {})
+        chat_id = int(message.get("chat", {}).get("id", 0))
+        if chat_id:
+            self._send_response(chat_id=chat_id, response=response)
 
     def _audit_denied(self, user_id: int) -> None:
         if self.audit_log is not None:
