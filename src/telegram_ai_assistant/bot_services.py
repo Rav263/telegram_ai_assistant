@@ -75,6 +75,12 @@ class BotServices:
         report = self.health_report_provider()
         return _format_health_report(report)
 
+    def help(self) -> BotResponse:
+        return BotResponse(
+            text=_format_help(),
+            reply_markup=_main_menu_markup(),
+        )
+
     def summary(self) -> str:
         return "Command /summary is not implemented yet."
 
@@ -158,6 +164,45 @@ def _format_safe_health_details(details: Any) -> str:
     return " ".join(parts)
 
 
+def _format_help() -> str:
+    return "\n".join(
+        [
+            "Commands:",
+            "/summary - daily structured summary",
+            "/tasks - open tasks and commitments",
+            "/review - pending low-confidence items",
+            "/backfill - safe history import controls",
+            "/blacklist - listener allow/deny policy",
+            "/settings - non-secret runtime settings",
+            "/health - component health",
+            "/logs - latest safe warning/error events",
+        ]
+    )
+
+
+def _main_menu_markup() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Summary", "callback_data": "menu:summary:0"},
+                {"text": "Tasks", "callback_data": "menu:tasks:0"},
+            ],
+            [
+                {"text": "Review", "callback_data": "menu:review:0"},
+                {"text": "Backfill", "callback_data": "menu:backfill:0"},
+            ],
+            [
+                {"text": "Health", "callback_data": "menu:health:0"},
+                {"text": "Logs", "callback_data": "menu:logs:0"},
+            ],
+            [
+                {"text": "Settings", "callback_data": "menu:settings:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ],
+        ]
+    }
+
+
 def _format_tasks(items: list[ExtractedItem]) -> str:
     lines = ["Open tasks:"]
     for index, item in enumerate(items, start=1):
@@ -179,4 +224,5 @@ def _tasks_reply_markup(items: list[ExtractedItem]) -> dict[str, object]:
             ]
             for index, item in enumerate(items, start=1)
         ]
+        + [[{"text": "Menu", "callback_data": "menu:help:0"}]]
     }

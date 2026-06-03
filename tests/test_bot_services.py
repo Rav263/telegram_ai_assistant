@@ -164,6 +164,47 @@ class BotServicesTests(unittest.TestCase):
 
         self.assertEqual(services.summary(), "Command /summary is not implemented yet.")
 
+    def test_help_lists_commands_with_main_menu_buttons(self):
+        services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
+
+        response = services.help()
+
+        self.assertIn("Commands:", response.text)
+        for command in (
+            "/summary",
+            "/tasks",
+            "/review",
+            "/backfill",
+            "/blacklist",
+            "/settings",
+            "/health",
+            "/logs",
+        ):
+            self.assertIn(command, response.text)
+        self.assertEqual(
+            response.reply_markup,
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Summary", "callback_data": "menu:summary:0"},
+                        {"text": "Tasks", "callback_data": "menu:tasks:0"},
+                    ],
+                    [
+                        {"text": "Review", "callback_data": "menu:review:0"},
+                        {"text": "Backfill", "callback_data": "menu:backfill:0"},
+                    ],
+                    [
+                        {"text": "Health", "callback_data": "menu:health:0"},
+                        {"text": "Logs", "callback_data": "menu:logs:0"},
+                    ],
+                    [
+                        {"text": "Settings", "callback_data": "menu:settings:0"},
+                        {"text": "Help", "callback_data": "menu:help:0"},
+                    ],
+                ]
+            },
+        )
+
     def test_tasks_lists_open_items_with_status_action_buttons(self):
         query = FakeItemQueryRepository(
             [
@@ -201,6 +242,7 @@ class BotServicesTests(unittest.TestCase):
                         {"text": "Partial 2", "callback_data": "status:partially_completed:task-2"},
                         {"text": "Cancel 2", "callback_data": "status:cancelled:task-2"},
                     ],
+                    [{"text": "Menu", "callback_data": "menu:help:0"}],
                 ]
             },
         )
