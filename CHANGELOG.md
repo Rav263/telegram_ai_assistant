@@ -23,3 +23,4 @@
 - Added one-shot live Telegram ingestor with chat cursor persistence.
 - Added opt-in ingestor debug output for saved message text and captions.
 - Added bounded live ingestion bootstrap modes for recent import and start-from-now backlog skipping.
+- Added one-shot Telegram backfill command for explicit chat/date-range imports without moving the live cursor.

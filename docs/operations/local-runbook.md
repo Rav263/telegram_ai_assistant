@@ -34,6 +34,10 @@ TELEGRAM_INGEST_LIMIT=100
 TELEGRAM_INGEST_DEBUG_MESSAGES=false
 TELEGRAM_INGEST_BOOTSTRAP_MODE=recent
 TELEGRAM_INGEST_BOOTSTRAP_DAYS=30
+TELEGRAM_BACKFILL_CHAT_ID=123456789
+TELEGRAM_BACKFILL_START_AT=2022-01-01T00:00:00+00:00
+TELEGRAM_BACKFILL_END_AT=2022-02-01T00:00:00+00:00
+TELEGRAM_BACKFILL_LIMIT=500
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
@@ -69,6 +73,23 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run ingestor
 The command prints JSON with `saved_count`, `requested_min_id`, `latest_message_id`, `bootstrap_mode`, and optional `oldest_sent_at`/`newest_sent_at` period bounds. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
 
 Set `TELEGRAM_INGEST_DEBUG_MESSAGES=true` only for local troubleshooting when you need the command output to include `debug_messages` with saved message IDs, sender IDs, direction, timestamp, text, and caption. Turn it back off after debugging so routine logs do not contain private message text.
+
+## Backfill
+
+Use `telegram-ai-assistant run backfill` for explicit historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch.
+
+Set these variables for each run:
+
+- `TELEGRAM_BACKFILL_CHAT_ID` is the Telegram chat to import.
+- `TELEGRAM_BACKFILL_START_AT` is the inclusive lower time bound and must include a timezone.
+- `TELEGRAM_BACKFILL_END_AT` is the upper time bound and must be after `TELEGRAM_BACKFILL_START_AT`.
+- `TELEGRAM_BACKFILL_LIMIT` caps one run, defaulting to 500.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run backfill
+```
+
+The command prints JSON with `saved_count`, `start_at`, `end_at`, optional `oldest_sent_at`/`newest_sent_at`, and `next_before_message_id`. Backfill does not update `last_ingested_message_id`, so it does not move the live ingestor cursor.
 
 ## Database
 

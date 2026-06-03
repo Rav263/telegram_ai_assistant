@@ -30,6 +30,11 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("TELEGRAM_INGEST_BOOTSTRAP_MODE", text)
         self.assertIn("TELEGRAM_INGEST_BOOTSTRAP_DAYS", text)
         self.assertIn("telegram-ai-assistant run ingestor", text)
+        self.assertIn("TELEGRAM_BACKFILL_CHAT_ID", text)
+        self.assertIn("TELEGRAM_BACKFILL_START_AT", text)
+        self.assertIn("TELEGRAM_BACKFILL_END_AT", text)
+        self.assertIn("TELEGRAM_BACKFILL_LIMIT", text)
+        self.assertIn("telegram-ai-assistant run backfill", text)
 
 
 if __name__ == "__main__":
