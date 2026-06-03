@@ -68,6 +68,8 @@ class AppContext:
             chat_id=self.settings.telegram_ingest_chat_id,
             limit=self.settings.telegram_ingest_limit,
             debug_messages=self.settings.telegram_ingest_debug_messages,
+            bootstrap_mode=self.settings.telegram_ingest_bootstrap_mode,
+            bootstrap_days=self.settings.telegram_ingest_bootstrap_days,
             connection_factory=self.connection_factory,
             client_factory=self.telegram_client_factory(self.settings),
         )

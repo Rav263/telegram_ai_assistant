@@ -76,6 +76,8 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["account_id"], "owner")
         self.assertEqual(captured["chat_id"], 1001)
         self.assertEqual(captured["limit"], 100)
+        self.assertEqual(captured["bootstrap_mode"], "recent")
+        self.assertEqual(captured["bootstrap_days"], 30)
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
 

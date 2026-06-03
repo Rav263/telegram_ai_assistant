@@ -28,6 +28,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_ingest_chat_id, 789)
         self.assertEqual(settings.telegram_ingest_limit, 100)
         self.assertFalse(settings.telegram_ingest_debug_messages)
+        self.assertEqual(settings.telegram_ingest_bootstrap_mode, "recent")
+        self.assertEqual(settings.telegram_ingest_bootstrap_days, 30)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.backfill_days, 30)
@@ -39,6 +41,8 @@ class SettingsTests(unittest.TestCase):
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
+            "TELEGRAM_INGEST_BOOTSTRAP_MODE": "start_now",
+            "TELEGRAM_INGEST_BOOTSTRAP_DAYS": "7",
         }
 
         settings = Settings.from_env(env)
@@ -47,6 +51,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
         self.assertTrue(settings.telegram_ingest_debug_messages)
+        self.assertEqual(settings.telegram_ingest_bootstrap_mode, "start_now")
+        self.assertEqual(settings.telegram_ingest_bootstrap_days, 7)
 
     def test_raises_when_required_setting_is_missing(self):
         env = dict(VALID_ENV)
@@ -98,6 +104,24 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "sometimes",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_ingest_bootstrap_mode_is_invalid(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_INGEST_BOOTSTRAP_MODE": "everything",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_telegram_ingest_bootstrap_days_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_INGEST_BOOTSTRAP_DAYS": "0",
         }
 
         with self.assertRaises(ConfigError):

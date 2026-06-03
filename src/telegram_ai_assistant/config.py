@@ -8,6 +8,9 @@ class ConfigError(ValueError):
     pass
 
 
+BOOTSTRAP_MODES = frozenset({"recent", "start_now", "cursor"})
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_api_id: int
@@ -22,6 +25,8 @@ class Settings:
     backfill_days: int = 30
     telegram_ingest_limit: int = 100
     telegram_ingest_debug_messages: bool = False
+    telegram_ingest_bootstrap_mode: str = "recent"
+    telegram_ingest_bootstrap_days: int = 30
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -43,6 +48,17 @@ class Settings:
                 env,
                 "TELEGRAM_INGEST_DEBUG_MESSAGES",
                 cls.telegram_ingest_debug_messages,
+            ),
+            telegram_ingest_bootstrap_mode=_optional_choice(
+                env,
+                "TELEGRAM_INGEST_BOOTSTRAP_MODE",
+                cls.telegram_ingest_bootstrap_mode,
+                BOOTSTRAP_MODES,
+            ),
+            telegram_ingest_bootstrap_days=_optional_positive_int(
+                env,
+                "TELEGRAM_INGEST_BOOTSTRAP_DAYS",
+                cls.telegram_ingest_bootstrap_days,
             ),
         )
 
@@ -82,3 +98,26 @@ def _optional_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ConfigError(f"setting must be a boolean: {name}")
+
+
+def _optional_choice(
+    env: Mapping[str, str],
+    name: str,
+    default: str,
+    allowed_values: frozenset[str],
+) -> str:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized not in allowed_values:
+        allowed = ", ".join(sorted(allowed_values))
+        raise ConfigError(f"setting must be one of {allowed}: {name}")
+    return normalized
+
+
+def _optional_positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    value = _optional_int(env, name, default)
+    if value <= 0:
+        raise ConfigError(f"setting must be a positive integer: {name}")
+    return value
