@@ -27,6 +27,7 @@ from telegram_ai_assistant.domain import (
     RuntimeEvent,
     SourceRef,
 )
+from telegram_ai_assistant.filtering import CandidateScoringContext
 
 
 class RecordingCursor:
@@ -369,20 +370,44 @@ class MessageProcessingRepositoryTests(unittest.TestCase):
                 "text": "Need to prepare the report",
                 "caption": "",
                 "reply_to_message_id": None,
+                "chat_type": "private",
             }
         ]
 
-        messages = MessageProcessingRepository(connection).pending_messages(limit=10)
+        repository = MessageProcessingRepository(connection)
+        messages = repository.pending_messages(limit=10)
 
         sql, params = connection.statements[0]
         normalized_sql = compact_sql(sql).lower()
         self.assertIn("from messages m", normalized_sql)
+        self.assertIn("left join chats c", normalized_sql)
+        self.assertIn("c.chat_type", normalized_sql)
         self.assertIn("not exists", normalized_sql)
         self.assertIn("message_processing_state s", normalized_sql)
         self.assertIn("s.stage = 'candidate_filter'", normalized_sql)
         self.assertIn("s.status = 'processed'", normalized_sql)
         self.assertEqual(params["limit"], 10)
         self.assertEqual(messages, [make_message()])
+        self.assertEqual(
+            repository.scoring_context_for(messages[0]),
+            CandidateScoringContext(chat_type="private"),
+        )
+        self.assertEqual(len(connection.statements), 1)
+
+    def test_scoring_context_for_reads_chat_type_for_uncached_message(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = {"chat_type": "private"}
+        message = make_message()
+
+        context = MessageProcessingRepository(connection).scoring_context_for(message)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("select chat_type", normalized_sql)
+        self.assertIn("from chats", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["chat_id"], 100)
+        self.assertEqual(context, CandidateScoringContext(chat_type="private"))
 
     def test_mark_candidate_filter_processed_upserts_state(self):
         connection = RecordingConnection()

@@ -17,6 +17,7 @@ from telegram_ai_assistant.domain import (
     RuntimeEvent,
     SourceRef,
 )
+from telegram_ai_assistant.filtering import CandidateScoringContext
 
 
 class Cursor(Protocol):
@@ -490,6 +491,7 @@ class MessageProcessingRepository:
 
     def __init__(self, connection: Connection):
         self._connection = connection
+        self._scoring_contexts: dict[tuple[str, int], CandidateScoringContext] = {}
 
     def pending_messages(self, limit: int) -> list[Message]:
         sql = """
@@ -502,8 +504,12 @@ class MessageProcessingRepository:
                 m.sent_at,
                 m.text,
                 m.caption,
-                m.reply_to_message_id
+                m.reply_to_message_id,
+                c.chat_type
             FROM messages m
+            LEFT JOIN chats c
+              ON c.account_id = m.account_id
+             AND c.chat_id = m.chat_id
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM message_processing_state s
@@ -517,7 +523,37 @@ class MessageProcessingRepository:
             LIMIT %(limit)s
         """
         rows = _fetchall(self._connection, sql, {"limit": limit})
-        return [_message_from_row(row) for row in rows]
+        messages = []
+        for row in rows:
+            message = _message_from_row(row)
+            self._scoring_contexts[(message.account_id, message.chat_id)] = CandidateScoringContext(
+                chat_type=str(_row_value(row, "chat_type", 9) or "")
+            )
+            messages.append(message)
+        return messages
+
+    def scoring_context_for(self, message: Message) -> CandidateScoringContext:
+        key = (message.account_id, message.chat_id)
+        cached = self._scoring_contexts.get(key)
+        if cached is not None:
+            return cached
+
+        sql = """
+            SELECT chat_type
+            FROM chats
+            WHERE account_id = %(account_id)s
+              AND chat_id = %(chat_id)s
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {"account_id": message.account_id, "chat_id": message.chat_id},
+        )
+        context = CandidateScoringContext(
+            chat_type="" if row is None else str(_row_value(row, "chat_type", 0) or "")
+        )
+        self._scoring_contexts[key] = context
+        return context
 
     def mark_candidate_filter_processed(self, messages: Sequence[Message]) -> None:
         for message in messages:
