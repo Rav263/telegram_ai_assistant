@@ -23,6 +23,7 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("TELEGRAM_SESSION_PATH", compose)
         self.assertIn("/var/lib/telegram-ai-assistant/sessions", compose)
         self.assertIn("env_file:", compose)
+        self.assertIn("required: false", compose)
 
     def test_dockerignore_excludes_local_sensitive_and_generated_files(self):
         dockerignore = Path(".dockerignore").read_text(encoding="utf-8")

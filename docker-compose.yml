@@ -18,7 +18,8 @@ services:
     build: .
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql://telegram_ai_assistant:${POSTGRES_PASSWORD:-telegram_ai_assistant}@postgres:5432/telegram_ai_assistant
       TELEGRAM_SESSION_PATH: /var/lib/telegram-ai-assistant/sessions/telegram-owner.session
