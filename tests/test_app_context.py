@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 import unittest
 
-from telegram_ai_assistant.app_context import AppContext
+from telegram_ai_assistant.app_context import AppContext, default_lm_studio_client_factory
 from telegram_ai_assistant.config import ConfigError, Settings
 from telegram_ai_assistant.worker import WorkerResult
 
@@ -197,6 +197,11 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
         self.assertEqual(factory.opened, 1)
         self.assertTrue(factory.connection_obj.exited)
+
+    def test_default_lm_studio_client_factory_uses_available_settings(self):
+        client = default_lm_studio_client_factory(make_settings())
+
+        self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
 
 
 def make_settings() -> Settings:

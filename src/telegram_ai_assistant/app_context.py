@@ -39,8 +39,6 @@ def default_telegram_client_factory(settings: Settings):
 def default_lm_studio_client_factory(settings: Settings):
     return LMStudioClient(
         base_url=settings.lm_studio_base_url,
-        model=settings.lm_studio_model,
-        timeout=settings.lm_studio_timeout_seconds,
     )
 
 
