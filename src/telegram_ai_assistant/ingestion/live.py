@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from telegram_ai_assistant.db.repositories import AccountRepository, ChatRepository, MessageRepository
@@ -29,6 +29,9 @@ class IngestionRunResult:
     requested_min_id: int
     saved_count: int
     latest_message_id: int
+    bootstrap_mode: str = "cursor"
+    oldest_sent_at: datetime | None = None
+    newest_sent_at: datetime | None = None
     debug_messages: tuple[IngestedMessageDebug, ...] = ()
 
 
@@ -47,6 +50,8 @@ class LiveIngestor:
         message_repository_factory: Callable[[Any], Any] = MessageRepository,
         now: Callable[[], datetime] | None = None,
         debug_messages: bool = False,
+        bootstrap_mode: str = "recent",
+        bootstrap_days: int = 30,
     ):
         self.account_id = account_id
         self.chat_id = chat_id
@@ -59,6 +64,8 @@ class LiveIngestor:
         self.message_repository_factory = message_repository_factory
         self.now = now or (lambda: datetime.now(UTC))
         self.debug_messages = debug_messages
+        self.bootstrap_mode = bootstrap_mode
+        self.bootstrap_days = bootstrap_days
 
     async def run_once(self) -> IngestionRunResult:
         with self.connection_factory.connection() as connection:
@@ -73,17 +80,55 @@ class LiveIngestor:
             client = await _resolve_client(self.client_factory())
             saved_count = 0
             latest_message_id = requested_min_id
+            effective_bootstrap_mode = "cursor"
+            oldest_sent_at: datetime | None = None
+            newest_sent_at: datetime | None = None
             debug_messages: list[IngestedMessageDebug] = []
             try:
-                async for raw_message in client.iter_new_messages(
-                    self.chat_id,
-                    min_id=requested_min_id,
-                    limit=self.limit,
-                ):
+                if requested_min_id == 0 and self.bootstrap_mode == "start_now":
+                    effective_bootstrap_mode = "start_now"
+                    latest_message_id = await client.get_latest_message_id(self.chat_id)
+                    if latest_message_id:
+                        chat_repository.update_ingestion_cursor(
+                            self.account_id,
+                            self.chat_id,
+                            latest_message_id,
+                            self.now(),
+                        )
+                    return IngestionRunResult(
+                        account_id=self.account_id,
+                        chat_id=self.chat_id,
+                        requested_min_id=requested_min_id,
+                        saved_count=0,
+                        latest_message_id=latest_message_id,
+                        bootstrap_mode=effective_bootstrap_mode,
+                    )
+
+                if requested_min_id == 0 and self.bootstrap_mode == "recent":
+                    effective_bootstrap_mode = "recent"
+                    stream = client.iter_recent_messages(
+                        self.chat_id,
+                        since=self.now() - timedelta(days=self.bootstrap_days),
+                        limit=self.limit,
+                    )
+                else:
+                    stream = client.iter_new_messages(
+                        self.chat_id,
+                        min_id=requested_min_id,
+                        limit=self.limit,
+                    )
+
+                async for raw_message in stream:
                     message = self.normalizer(self.account_id, raw_message)
                     message_repository.upsert_message(message)
                     saved_count += 1
                     latest_message_id = max(latest_message_id, message.telegram_message_id)
+                    oldest_sent_at = (
+                        message.sent_at if oldest_sent_at is None else min(oldest_sent_at, message.sent_at)
+                    )
+                    newest_sent_at = (
+                        message.sent_at if newest_sent_at is None else max(newest_sent_at, message.sent_at)
+                    )
                     if self.debug_messages:
                         debug_messages.append(_debug_message(message))
             finally:
@@ -103,6 +148,9 @@ class LiveIngestor:
                 requested_min_id=requested_min_id,
                 saved_count=saved_count,
                 latest_message_id=latest_message_id,
+                bootstrap_mode=effective_bootstrap_mode,
+                oldest_sent_at=oldest_sent_at,
+                newest_sent_at=newest_sent_at,
                 debug_messages=tuple(debug_messages),
             )
 

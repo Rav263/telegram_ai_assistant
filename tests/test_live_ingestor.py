@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import unittest
 
 from telegram_ai_assistant.domain import Message, MessageDirection
@@ -64,14 +64,24 @@ class FakeMessageRepository:
 
 
 class FakeIngestionClient:
-    def __init__(self, messages):
+    def __init__(self, messages, *, latest_message_id=0):
         self.messages = list(messages)
+        self.latest_message_id = latest_message_id
         self.calls = []
 
     async def iter_new_messages(self, chat_id, *, min_id=None, limit=None):
         self.calls.append(("iter_new_messages", chat_id, min_id, limit))
         for message in self.messages:
             yield message
+
+    async def iter_recent_messages(self, chat_id, *, since, limit=None):
+        self.calls.append(("iter_recent_messages", chat_id, since, limit))
+        for message in self.messages:
+            yield message
+
+    async def get_latest_message_id(self, chat_id):
+        self.calls.append(("get_latest_message_id", chat_id))
+        return self.latest_message_id
 
     async def close(self):
         self.calls.append(("close",))
@@ -134,7 +144,65 @@ class LiveIngestorTests(unittest.TestCase):
         self.assertEqual(result.requested_min_id, 200)
         self.assertEqual(result.saved_count, 2)
         self.assertEqual(result.latest_message_id, 202)
+        self.assertEqual(result.bootstrap_mode, "cursor")
+        self.assertEqual(result.oldest_sent_at, datetime(2026, 6, 2, 9, 1, tzinfo=UTC))
+        self.assertEqual(result.newest_sent_at, datetime(2026, 6, 2, 9, 2, tzinfo=UTC))
         self.assertEqual(result.debug_messages, ())
+
+    def test_run_once_uses_recent_bootstrap_when_cursor_is_empty(self):
+        client = FakeIngestionClient(
+            [
+                RawMessage(201, "recent message"),
+                RawMessage(202, "newer recent message"),
+            ]
+        )
+        ingestor, repositories = make_ingestor(client=client, cursor=0)
+
+        result = asyncio.run(ingestor.run_once())
+
+        cutoff = datetime(2026, 6, 2, 10, 0, tzinfo=UTC) - timedelta(days=30)
+        self.assertEqual(client.calls, [("iter_recent_messages", 1001, cutoff, 10), ("close",)])
+        self.assertEqual(len(repositories.messages.messages), 2)
+        self.assertEqual(
+            repositories.chat.updated_cursor,
+            ("owner", 1001, 202, datetime(2026, 6, 2, 10, 0, tzinfo=UTC)),
+        )
+        self.assertEqual(result.requested_min_id, 0)
+        self.assertEqual(result.saved_count, 2)
+        self.assertEqual(result.latest_message_id, 202)
+        self.assertEqual(result.bootstrap_mode, "recent")
+        self.assertEqual(result.oldest_sent_at, datetime(2026, 6, 2, 9, 1, tzinfo=UTC))
+        self.assertEqual(result.newest_sent_at, datetime(2026, 6, 2, 9, 2, tzinfo=UTC))
+
+    def test_run_once_start_now_bootstrap_updates_cursor_without_saving_messages(self):
+        client = FakeIngestionClient([], latest_message_id=999)
+        ingestor, repositories = make_ingestor(client=client, cursor=0, bootstrap_mode="start_now")
+
+        result = asyncio.run(ingestor.run_once())
+
+        self.assertEqual(client.calls, [("get_latest_message_id", 1001), ("close",)])
+        self.assertEqual(repositories.messages.messages, [])
+        self.assertEqual(
+            repositories.chat.updated_cursor,
+            ("owner", 1001, 999, datetime(2026, 6, 2, 10, 0, tzinfo=UTC)),
+        )
+        self.assertEqual(result.requested_min_id, 0)
+        self.assertEqual(result.saved_count, 0)
+        self.assertEqual(result.latest_message_id, 999)
+        self.assertEqual(result.bootstrap_mode, "start_now")
+        self.assertIsNone(result.oldest_sent_at)
+        self.assertIsNone(result.newest_sent_at)
+
+    def test_run_once_uses_cursor_ingestion_when_cursor_exists_even_with_start_now_mode(self):
+        client = FakeIngestionClient([RawMessage(201, "new message")], latest_message_id=999)
+        ingestor, _repositories = make_ingestor(client=client, cursor=200, bootstrap_mode="start_now")
+
+        result = asyncio.run(ingestor.run_once())
+
+        self.assertEqual(client.calls, [("iter_new_messages", 1001, 200, 10), ("close",)])
+        self.assertEqual(result.requested_min_id, 200)
+        self.assertEqual(result.saved_count, 1)
+        self.assertEqual(result.bootstrap_mode, "cursor")
 
     def test_run_once_collects_debug_messages_when_enabled(self):
         client = FakeIngestionClient(
@@ -202,11 +270,11 @@ class RepositoryBundle:
         self.messages = messages
 
 
-def make_ingestor(client, normalizer=None, debug_messages=False):
+def make_ingestor(client, normalizer=None, debug_messages=False, cursor=200, bootstrap_mode="recent"):
     connection_factory = FakeConnectionFactory()
     repositories = RepositoryBundle(
         account=FakeAccountRepository(connection_factory.connection_obj),
-        chat=FakeChatRepository(connection_factory.connection_obj, cursor=200),
+        chat=FakeChatRepository(connection_factory.connection_obj, cursor=cursor),
         messages=FakeMessageRepository(connection_factory.connection_obj),
     )
 
@@ -221,6 +289,8 @@ def make_ingestor(client, normalizer=None, debug_messages=False):
         "message_repository_factory": lambda connection: repositories.messages,
         "now": lambda: datetime(2026, 6, 2, 10, 0, tzinfo=UTC),
         "debug_messages": debug_messages,
+        "bootstrap_mode": bootstrap_mode,
+        "bootstrap_days": 30,
     }
     if normalizer is not None:
         kwargs["normalizer"] = normalizer
