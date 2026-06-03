@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import inspect
 from typing import Any
 
 from .filtering import score_message
@@ -50,7 +51,7 @@ class Worker:
         review_repository: Any | None = None,
         llm_run_repository: Any | None = None,
         runtime_event_repository: Any | None = None,
-        scorer: Callable[[Any], Any] = score_message,
+        scorer: Callable[..., Any] = score_message,
         item_auto_apply_threshold: float = 0.8,
         status_auto_apply_threshold: float = 0.8,
     ):
@@ -72,7 +73,7 @@ class Worker:
         failures = 0
         for message in messages:
             try:
-                candidate = self.scorer(message)
+                candidate = self._score_message(message)
             except Exception as exc:
                 self._call_optional(
                     self.message_source,
@@ -152,6 +153,23 @@ class Worker:
         method = getattr(target, method_name, None)
         if method is not None:
             method(*args)
+
+    def _score_message(self, message: Any) -> Any:
+        if not self._scorer_accepts_context():
+            return self.scorer(message)
+        return self.scorer(message, self._scoring_context_for(message))
+
+    def _scorer_accepts_context(self) -> bool:
+        try:
+            return len(inspect.signature(self.scorer).parameters) > 1
+        except (TypeError, ValueError):
+            return True
+
+    def _scoring_context_for(self, message: Any) -> Any | None:
+        context_provider = getattr(self.message_source, "scoring_context_for", None)
+        if context_provider is None:
+            return None
+        return context_provider(message)
 
     def _llm_failure_metadata(self, error: BaseException, *, candidate_count: int) -> dict[str, object]:
         metadata: dict[str, object] = {

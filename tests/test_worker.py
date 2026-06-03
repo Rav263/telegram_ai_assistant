@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.domain import ExtractedItem, ItemType, Message, MessageDirection, SourceRef
-from telegram_ai_assistant.filtering import CandidateReason, CandidateScore
+from telegram_ai_assistant.filtering import CandidateReason, CandidateScore, CandidateScoringContext
 from telegram_ai_assistant.llm_client import LMStudioError
 from telegram_ai_assistant.worker import Worker
 
@@ -33,6 +33,17 @@ class FakeMessageSource:
 
     def mark_candidate_filter_failed(self, message, error_type):
         self.failed.append((message, error_type))
+
+
+class ContextMessageSource(FakeMessageSource):
+    def __init__(self, messages, context):
+        super().__init__(messages)
+        self.context = context
+        self.context_requests = []
+
+    def scoring_context_for(self, message):
+        self.context_requests.append(message)
+        return self.context
 
 
 class FakeCandidateRepository:
@@ -149,6 +160,40 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result.scored_messages, 1)
         self.assertEqual(candidate_repository.enqueued, [])
         self.assertEqual(message_source.processed, [message])
+
+    def test_process_messages_passes_optional_scoring_context_to_scorer(self):
+        message = make_message("Завтра нужно заехать на озон, забрать ирригатор")
+        source = ContextMessageSource([message], CandidateScoringContext(chat_type="private"))
+        received = []
+
+        def scorer(message_arg, context_arg=None):
+            received.append((message_arg, context_arg))
+            return CandidateScore(score=0.8, reasons=(CandidateReason.PRIVATE_CHAT_PRIORITY,))
+
+        candidate_repository = FakeCandidateRepository()
+        worker = Worker(message_source=source, candidate_repository=candidate_repository, scorer=scorer)
+
+        result = worker.process_messages(limit=10)
+
+        self.assertEqual(result.queued_candidates, 1)
+        self.assertEqual(source.context_requests, [message])
+        self.assertEqual(received, [(message, CandidateScoringContext(chat_type="private"))])
+        self.assertIn("private_chat_priority", candidate_repository.enqueued[0]["reasons"])
+
+    def test_process_messages_keeps_legacy_one_argument_scorers_compatible(self):
+        message = make_message("надо бы проверить")
+        source = ContextMessageSource([message], CandidateScoringContext(chat_type="private"))
+
+        def scorer(message_arg):
+            return CandidateScore(score=0.35, reasons=(CandidateReason.SELF_NOTE,))
+
+        candidate_repository = FakeCandidateRepository()
+        worker = Worker(message_source=source, candidate_repository=candidate_repository, scorer=scorer)
+
+        result = worker.process_messages(limit=10)
+
+        self.assertEqual(result.queued_candidates, 1)
+        self.assertEqual(candidate_repository.enqueued[0]["reasons"], ("self_note",))
 
     def test_marks_scorer_failures_and_continues_without_raw_error_text(self):
         failed_message = make_message("secret text", telegram_message_id=201)
