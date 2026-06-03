@@ -151,7 +151,19 @@ def _run_worker_loop(
         sleep(settings.worker_poll_interval_seconds)
 
 
-def run_bot(settings: Settings) -> int:
+def run_bot(settings: Settings, *, context_factory=AppContext.from_settings) -> int:
+    logger.info("bot started account_id=%s", settings.telegram_ingest_account_id)
+    try:
+        result = context_factory(settings).run_bot_forever()
+    except KeyboardInterrupt:
+        logger.info("bot stopped account_id=%s reason=interrupt", settings.telegram_ingest_account_id)
+        return 0
+    except Exception as exc:
+        logger.error("bot failed exception_type=%s", type(exc).__name__)
+        print(f"bot failed: {type(exc).__name__}")
+        return 1
+    status = getattr(result, "status", "stopped")
+    logger.info("bot stopped account_id=%s status=%s", settings.telegram_ingest_account_id, status)
     return 0
 
 

@@ -1,4 +1,5 @@
 import json
+from urllib.error import URLError
 import unittest
 
 from telegram_ai_assistant.llm_client import LMStudioClient, LMStudioError
@@ -56,6 +57,29 @@ class LMStudioClientTests(unittest.TestCase):
 
         with self.assertRaises(LMStudioError):
             client.extract_json(messages=[{"role": "user", "content": "extract"}])
+
+    def test_extract_json_wraps_transport_failures_with_safe_diagnostics(self):
+        def failing_transport(_request):
+            raise URLError("private connection details")
+
+        client = LMStudioClient(
+            base_url="http://127.0.0.1:1234/v1",
+            transport=failing_transport,
+        )
+
+        with self.assertRaises(LMStudioError) as captured:
+            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+
+        self.assertEqual(
+            captured.exception.safe_metadata,
+            {
+                "endpoint_scheme": "http",
+                "endpoint_host": "127.0.0.1",
+                "endpoint_path": "/v1/chat/completions",
+                "transport_error_type": "URLError",
+            },
+        )
+        self.assertNotIn("private connection details", str(captured.exception))
 
 
 if __name__ == "__main__":

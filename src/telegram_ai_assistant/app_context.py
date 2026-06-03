@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from .config import ConfigError, Settings
+from .bot_api import TelegramBotApi
+from .bot_router import BotRouter
+from .bot_runtime import BotRuntime
+from .bot_services import BotServices
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
 from .db.repositories import (
@@ -22,6 +26,7 @@ from .ingestion.listener import LiveUpdateListener
 from .ingestion.live import LiveIngestor
 from .ingestion.telethon_adapter import TelethonIngestionAdapter
 from .llm_client import LMStudioClient
+from .security import BotAccessController
 from .worker import Worker, WorkerResult
 
 
@@ -42,6 +47,10 @@ def default_lm_studio_client_factory(settings: Settings):
     )
 
 
+def default_bot_api_factory(settings: Settings):
+    return TelegramBotApi(token=settings.telegram_bot_token)
+
+
 @dataclass(frozen=True)
 class AppContext:
     settings: Settings
@@ -53,6 +62,8 @@ class AppContext:
     listener_factory: Any = LiveUpdateListener
     worker_factory: Any = Worker
     extraction_service_factory: Any = ExtractionService
+    bot_api_factory: Callable[[Settings], Any] = default_bot_api_factory
+    bot_runtime_factory: Any = BotRuntime
     telegram_client_factory: Callable[[Settings], Any] = default_telegram_client_factory
     lm_studio_client_factory: Callable[[Settings], Any] = default_lm_studio_client_factory
 
@@ -160,6 +171,25 @@ class AppContext:
                 worker.process_messages(limit=self.settings.worker_batch_size),
                 worker.process_candidates(limit=self.settings.worker_batch_size),
             )
+
+    def run_bot_forever(self, *, stop_requested: Callable[[], bool] | None = None):
+        with self.connection_factory.connection() as connection:
+            runtime_event_repository = RuntimeEventRepository(connection)
+            bot_api = self.bot_api_factory(self.settings)
+            router = BotRouter(
+                access=BotAccessController(self.settings.telegram_allowed_user_id),
+                bot_api=bot_api,
+                services=BotServices(
+                    runtime_event_repository=runtime_event_repository,
+                    health_report_provider=self.online_health_report,
+                ),
+            )
+            runtime = self.bot_runtime_factory(
+                bot_api=bot_api,
+                router=router,
+                runtime_event_repository=runtime_event_repository,
+            )
+            return runtime.run_forever(stop_requested=stop_requested)
 
 
 def merge_worker_results(*results: WorkerResult) -> WorkerResult:

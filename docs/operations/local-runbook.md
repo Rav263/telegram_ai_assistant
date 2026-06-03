@@ -134,6 +134,23 @@ Worker tuning variables:
 
 LLM failures and worker errors are recorded as sanitized runtime events. Ask the owner-only bot for `/logs` to see the latest warning/error runtime events without Telegram message text, raw prompts, bot tokens, API hashes, database URLs, or raw tracebacks.
 
+For LM Studio connection failures, `/logs` may include safe technical fields such as `endpoint_scheme`, `endpoint_host`, `endpoint_path`, `http_status`, and `transport_error_type`. If Docker on macOS reports `endpoint_host=127.0.0.1`, set `LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1` in `.env` so the container reaches LM Studio on the host.
+
+## Bot
+
+Use `telegram-ai-assistant run bot` for owner-only Telegram Bot API long polling. The bot accepts only updates from `TELEGRAM_ALLOWED_USER_ID`; denied users receive no command response.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run bot
+```
+
+Implemented production commands:
+
+- `/logs` shows sanitized warning/error runtime events.
+- `/health` shows Postgres and LM Studio health.
+
+Other routed commands currently return a stable "not implemented yet" response until their product services are built.
+
 ## Backfill
 
 Use `telegram-ai-assistant run backfill` for explicit historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch.
@@ -190,10 +207,10 @@ Before changing storage or upgrading Postgres, create a logical backup:
 docker compose exec -T postgres pg_dump -U telegram_ai_assistant -d telegram_ai_assistant > "${HOME}/.telegram/telegram_ai_assistant/backups/telegram_ai_$(date +%F_%H%M).sql"
 ```
 
-Build and start the production listener and worker stack:
+Build and start the production listener, worker, and bot stack:
 
 ```bash
-docker compose up -d postgres app-listener app-worker
+docker compose up -d postgres app-listener app-worker app-bot
 ```
 
 For Docker, set `LOG_LEVEL` in `.env` before starting the service. Use `INFO` for normal operation and `DEBUG` only while diagnosing listener scope or message persistence issues.

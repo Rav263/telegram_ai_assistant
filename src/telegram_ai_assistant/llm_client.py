@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import json
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
 class LMStudioError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, safe_metadata: Mapping[str, object] | None = None):
+        super().__init__(message)
+        self.safe_metadata = dict(safe_metadata or {})
 
 
 Transport = Callable[[Request], object]
@@ -36,7 +39,10 @@ class LMStudioClient:
         except LMStudioError:
             raise
         except Exception as exc:
-            raise LMStudioError("LM Studio chat completion request failed") from exc
+            raise LMStudioError(
+                "LM Studio chat completion request failed",
+                safe_metadata=_safe_transport_metadata(request, exc),
+            ) from exc
 
     def _build_request(self, messages: Sequence[Mapping[str, str]]) -> Request:
         body = {
@@ -76,3 +82,17 @@ def _extract_assistant_content(payload: Any) -> str:
     if not isinstance(content, str) or not content.strip():
         raise LMStudioError("LM Studio assistant content is empty")
     return content
+
+
+def _safe_transport_metadata(request: Request, error: BaseException) -> dict[str, object]:
+    parsed = urlsplit(request.full_url)
+    metadata: dict[str, object] = {
+        "endpoint_scheme": parsed.scheme,
+        "endpoint_host": parsed.hostname or "",
+        "endpoint_path": parsed.path,
+        "transport_error_type": type(error).__name__,
+    }
+    status = getattr(error, "code", None)
+    if isinstance(status, int):
+        metadata["http_status"] = status
+    return metadata

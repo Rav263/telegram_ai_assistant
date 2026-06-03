@@ -6,6 +6,14 @@ from typing import Any
 
 from .filtering import score_message
 
+SAFE_LLM_FAILURE_METADATA_KEYS = (
+    "endpoint_scheme",
+    "endpoint_host",
+    "endpoint_path",
+    "http_status",
+    "transport_error_type",
+)
+
 
 @dataclass(frozen=True)
 class WorkerResult:
@@ -95,10 +103,7 @@ class Worker:
                     severity="warning",
                     event_type="llm_failure",
                     message="LLM batch failed",
-                    metadata={
-                        "error_type": type(exc).__name__,
-                        "candidate_count": len(candidate_messages),
-                    },
+                    metadata=self._llm_failure_metadata(exc, candidate_count=len(candidate_messages)),
                 )
             return WorkerResult(processed_candidates=0, failures=1)
 
@@ -135,3 +140,15 @@ class Worker:
         method = getattr(target, method_name, None)
         if method is not None:
             method(*args)
+
+    def _llm_failure_metadata(self, error: BaseException, *, candidate_count: int) -> dict[str, object]:
+        metadata: dict[str, object] = {
+            "error_type": type(error).__name__,
+            "candidate_count": candidate_count,
+        }
+        safe_metadata = getattr(error, "safe_metadata", {})
+        if isinstance(safe_metadata, dict):
+            for key in SAFE_LLM_FAILURE_METADATA_KEYS:
+                if key in safe_metadata:
+                    metadata[key] = safe_metadata[key]
+        return metadata

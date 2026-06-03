@@ -3,6 +3,7 @@ import unittest
 
 from telegram_ai_assistant.domain import ExtractedItem, ItemType, Message, MessageDirection, SourceRef
 from telegram_ai_assistant.filtering import CandidateReason, CandidateScore
+from telegram_ai_assistant.llm_client import LMStudioError
 from telegram_ai_assistant.worker import Worker
 
 
@@ -239,6 +240,36 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(runtime_events.events[0]["metadata"]["error_type"], "RuntimeError")
         self.assertNotIn("LM Studio unavailable", str(runtime_events.events))
         self.assertEqual(candidate_repository.acknowledged, [])
+
+    def test_records_lm_failure_safe_diagnostics_without_raw_details(self):
+        candidate_repository = FakeCandidateRepository(candidate_messages=[make_message("перезвоню")])
+        runtime_events = FakeRuntimeEventRepository()
+        worker = Worker(
+            candidate_repository=candidate_repository,
+            extraction_service=FakeExtractionService(
+                error=LMStudioError(
+                    "failed with private details",
+                    safe_metadata={
+                        "endpoint_scheme": "http",
+                        "endpoint_host": "127.0.0.1",
+                        "endpoint_path": "/v1/chat/completions",
+                        "transport_error_type": "URLError",
+                        "raw": "secret",
+                    },
+                )
+            ),
+            runtime_event_repository=runtime_events,
+        )
+
+        result = worker.process_candidates(limit=10)
+
+        metadata = runtime_events.events[0]["metadata"]
+        self.assertEqual(result.failures, 1)
+        self.assertEqual(metadata["error_type"], "LMStudioError")
+        self.assertEqual(metadata["endpoint_host"], "127.0.0.1")
+        self.assertEqual(metadata["transport_error_type"], "URLError")
+        self.assertNotIn("raw", metadata)
+        self.assertNotIn("private details", str(runtime_events.events))
 
 
 if __name__ == "__main__":

@@ -86,6 +86,26 @@ class TelegramBotApiTests(unittest.TestCase):
             },
         )
 
+    def test_get_updates_posts_expected_json_and_returns_result(self):
+        transport = FakeTransport()
+        api = TelegramBotApi(token="bot-token", transport=transport)
+
+        result = api.get_updates(offset=42, timeout=15)
+
+        self.assertEqual(result, {"id": "result-1"})
+        self.assertEqual(
+            transport.calls[0]["url"],
+            "https://api.telegram.org/botbot-token/getUpdates",
+        )
+        self.assertEqual(
+            transport.calls[0]["payload"],
+            {
+                "offset": 42,
+                "timeout": 15,
+                "allowed_updates": ["message", "callback_query"],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

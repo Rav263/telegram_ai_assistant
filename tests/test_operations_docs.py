@@ -44,7 +44,9 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("WORKER_STATUS_AUTO_APPLY_THRESHOLD", text)
         self.assertIn("telegram-ai-assistant run worker --once", text)
         self.assertIn("telegram-ai-assistant run worker", text)
+        self.assertIn("telegram-ai-assistant run bot", text)
         self.assertIn("/logs", text)
+        self.assertIn("endpoint_host", text)
         self.assertIn("LOG_LEVEL", text)
         self.assertIn("--log-level debug", text)
         self.assertIn("logs go to stderr", text)
@@ -52,7 +54,7 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("~/.telegram/telegram_ai_assistant/postgres", text)
         self.assertIn("pg_dump", text)
         self.assertIn("Do not run `docker compose down -v`", text)
-        self.assertIn("docker compose up -d postgres app-listener app-worker", text)
+        self.assertIn("docker compose up -d postgres app-listener app-worker app-bot", text)
         self.assertIn("docker compose run --rm app-listener telegram-ai-assistant migrate", text)
         self.assertIn("docker compose run --rm app-listener telegram-ai-assistant health", text)
 

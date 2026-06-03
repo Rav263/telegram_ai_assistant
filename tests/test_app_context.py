@@ -198,6 +198,38 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(factory.opened, 1)
         self.assertTrue(factory.connection_obj.exited)
 
+    def test_run_bot_forever_builds_owner_only_runtime(self):
+        factory = FakeConnectionFactory()
+        captured = {}
+
+        class FakeBotRuntime:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def run_forever(self, *, stop_requested=None):
+                captured["stop_requested"] = stop_requested
+                return "bot-result"
+
+        context = AppContext(
+            settings=make_settings(),
+            connection_factory=factory,
+            bot_api_factory=lambda settings: "bot-api",
+            bot_runtime_factory=FakeBotRuntime,
+        )
+        stop_requested = lambda: True
+
+        result = context.run_bot_forever(stop_requested=stop_requested)
+
+        self.assertEqual(result, "bot-result")
+        self.assertEqual(captured["bot_api"], "bot-api")
+        self.assertEqual(captured["router"].access.allowed_user_id, 456)
+        self.assertEqual(captured["router"].bot_api, "bot-api")
+        self.assertEqual(captured["router"].services.runtime_event_repository.__class__.__name__, "RuntimeEventRepository")
+        self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
+        self.assertIs(captured["stop_requested"], stop_requested)
+        self.assertEqual(factory.opened, 1)
+        self.assertTrue(factory.connection_obj.exited)
+
     def test_default_lm_studio_client_factory_uses_available_settings(self):
         client = default_lm_studio_client_factory(make_settings())
 

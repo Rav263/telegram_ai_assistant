@@ -28,6 +28,15 @@ class TelegramBotApi:
             payload["reply_markup"] = reply_markup
         return self._post("sendMessage", payload)
 
+    def get_updates(self, *, offset: int | None = None, timeout: int = 25):
+        payload: dict[str, Any] = {
+            "timeout": timeout,
+            "allowed_updates": ["message", "callback_query"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+        return self._post("getUpdates", payload)
+
     def answer_callback_query(
         self,
         *,

@@ -50,5 +50,21 @@ services:
     volumes:
       - telegram-sessions:/var/lib/telegram-ai-assistant/sessions
 
+  app-bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://telegram_ai_assistant:${POSTGRES_PASSWORD:-telegram_ai_assistant}@postgres:5432/telegram_ai_assistant
+      TELEGRAM_SESSION_PATH: /var/lib/telegram-ai-assistant/sessions/telegram-owner.session
+    command: telegram-ai-assistant run bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - telegram-sessions:/var/lib/telegram-ai-assistant/sessions
+
 volumes:
   telegram-sessions:

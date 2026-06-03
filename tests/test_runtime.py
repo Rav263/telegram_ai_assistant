@@ -15,6 +15,7 @@ from telegram_ai_assistant.runtime import (
     run_backfill,
     run_ingestor,
     run_listener,
+    run_bot,
     run_process,
     run_worker,
 )
@@ -351,6 +352,40 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("worker failed", output.getvalue())
         self.assertNotIn("secret-token", output.getvalue())
         self.assertIn("worker failed", log_output)
+        self.assertIn("RuntimeError", log_output)
+        self.assertNotIn("secret-token", log_output)
+
+    def test_run_bot_executes_context_and_logs_lifecycle(self):
+        calls = []
+
+        class FakeContext:
+            def run_bot_forever(self):
+                calls.append("run")
+                return "bot-result"
+
+        with self.assertLogs("telegram_ai_assistant.runtime", level="INFO") as logs:
+            exit_code = run_bot(make_settings(), context_factory=lambda settings: FakeContext())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["run"])
+        self.assertIn("bot started", "\n".join(logs.output))
+        self.assertIn("bot stopped", "\n".join(logs.output))
+
+    def test_run_bot_failure_returns_nonzero_without_secret_values(self):
+        class FailingContext:
+            def run_bot_forever(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR") as logs:
+            with redirect_stdout(output):
+                exit_code = run_bot(make_settings(), context_factory=lambda settings: FailingContext())
+
+        log_output = "\n".join(logs.output)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("bot failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("bot failed", log_output)
         self.assertIn("RuntimeError", log_output)
         self.assertNotIn("secret-token", log_output)
 

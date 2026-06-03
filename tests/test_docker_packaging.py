@@ -13,14 +13,16 @@ class DockerPackagingTests(unittest.TestCase):
         self.assertIn("pip install --no-cache-dir .", dockerfile)
         self.assertIn('CMD ["telegram-ai-assistant", "run", "listener"]', dockerfile)
 
-    def test_docker_compose_defines_postgres_listener_and_worker(self):
+    def test_docker_compose_defines_postgres_listener_worker_and_bot(self):
         compose = Path("docker-compose.yml").read_text(encoding="utf-8")
 
         self.assertIn("postgres:", compose)
         self.assertIn("app-listener:", compose)
         self.assertIn("app-worker:", compose)
+        self.assertIn("app-bot:", compose)
         self.assertIn("telegram-ai-assistant run listener", compose)
         self.assertIn("telegram-ai-assistant run worker", compose)
+        self.assertIn("telegram-ai-assistant run bot", compose)
         self.assertIn("telegram-sessions", compose)
         self.assertIn("TELEGRAM_SESSION_PATH", compose)
         self.assertIn("/var/lib/telegram-ai-assistant/sessions", compose)
