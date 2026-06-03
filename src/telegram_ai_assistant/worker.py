@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +29,7 @@ class Worker:
         item_repository: Any | None = None,
         review_repository: Any | None = None,
         llm_run_repository: Any | None = None,
+        scorer: Callable[[Any], Any] = score_message,
         item_auto_apply_threshold: float = 0.8,
         status_auto_apply_threshold: float = 0.8,
     ):
@@ -37,15 +39,31 @@ class Worker:
         self.item_repository = item_repository
         self.review_repository = review_repository
         self.llm_run_repository = llm_run_repository
+        self.scorer = scorer
         self.item_auto_apply_threshold = item_auto_apply_threshold
         self.status_auto_apply_threshold = status_auto_apply_threshold
 
     def process_messages(self, *, limit: int) -> WorkerResult:
         messages = tuple(self.message_source.pending_messages(limit))
+        scored = 0
         queued = 0
+        failures = 0
         for message in messages:
-            candidate = score_message(message)
+            try:
+                candidate = self.scorer(message)
+            except Exception as exc:
+                self._call_optional(
+                    self.message_source,
+                    "mark_candidate_filter_failed",
+                    message,
+                    type(exc).__name__,
+                )
+                failures += 1
+                continue
+
+            scored += 1
             if candidate.score <= 0:
+                self._call_optional(self.message_source, "mark_candidate_filter_processed", [message])
                 continue
             self.candidate_repository.enqueue_candidate(
                 account_id=message.account_id,
@@ -55,8 +73,9 @@ class Worker:
                 reasons=tuple(reason.value for reason in candidate.reasons),
             )
             queued += 1
+            self._call_optional(self.message_source, "mark_candidate_filter_processed", [message])
 
-        return WorkerResult(scored_messages=len(messages), queued_candidates=queued)
+        return WorkerResult(scored_messages=scored, queued_candidates=queued, failures=failures)
 
     def process_candidates(self, *, limit: int) -> WorkerResult:
         candidate_messages = tuple(self.candidate_repository.pending_candidate_messages(limit))

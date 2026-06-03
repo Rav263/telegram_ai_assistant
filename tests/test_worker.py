@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.domain import ExtractedItem, ItemType, Message, MessageDirection, SourceRef
+from telegram_ai_assistant.filtering import CandidateReason, CandidateScore
 from telegram_ai_assistant.worker import Worker
 
 
@@ -20,9 +21,17 @@ def make_message(text: str, telegram_message_id: int = 200) -> Message:
 class FakeMessageSource:
     def __init__(self, messages):
         self.messages = list(messages)
+        self.processed = []
+        self.failed = []
 
     def pending_messages(self, limit):
         return self.messages[:limit]
+
+    def mark_candidate_filter_processed(self, messages):
+        self.processed.extend(messages)
+
+    def mark_candidate_filter_failed(self, message, error_type):
+        self.failed.append((message, error_type))
 
 
 class FakeCandidateRepository:
@@ -79,7 +88,7 @@ class FakeLLMRunRepository:
         self.failures = []
 
     def record_failure(self, error):
-        self.failures.append(str(error))
+        self.failures.append(type(error).__name__)
 
 
 class ExtractionResult:
@@ -102,6 +111,61 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(candidate_repository.enqueued), 1)
         self.assertEqual(candidate_repository.enqueued[0]["telegram_message_id"], 200)
         self.assertIn("owner_commitment", candidate_repository.enqueued[0]["reasons"])
+
+    def test_marks_positive_score_messages_processed_after_enqueue(self):
+        message = make_message("Через минут 30-40 перезвоню")
+        message_source = FakeMessageSource([message])
+        worker = Worker(
+            message_source=message_source,
+            candidate_repository=FakeCandidateRepository(),
+        )
+
+        result = worker.process_messages(limit=10)
+
+        self.assertEqual(result.scored_messages, 1)
+        self.assertEqual(message_source.processed, [message])
+        self.assertEqual(message_source.failed, [])
+
+    def test_marks_zero_score_messages_processed_without_enqueue(self):
+        message = make_message("Привет")
+        message_source = FakeMessageSource([message])
+        candidate_repository = FakeCandidateRepository()
+        worker = Worker(
+            message_source=message_source,
+            candidate_repository=candidate_repository,
+        )
+
+        result = worker.process_messages(limit=10)
+
+        self.assertEqual(result.scored_messages, 1)
+        self.assertEqual(candidate_repository.enqueued, [])
+        self.assertEqual(message_source.processed, [message])
+
+    def test_marks_scorer_failures_and_continues_without_raw_error_text(self):
+        failed_message = make_message("secret text", telegram_message_id=201)
+        good_message = make_message("надо бы проверить", telegram_message_id=202)
+        message_source = FakeMessageSource([failed_message, good_message])
+        candidate_repository = FakeCandidateRepository()
+
+        def scorer(message):
+            if message.telegram_message_id == 201:
+                raise RuntimeError("private message text")
+            return CandidateScore(score=0.35, reasons=(CandidateReason.SELF_NOTE,))
+
+        worker = Worker(
+            message_source=message_source,
+            candidate_repository=candidate_repository,
+            scorer=scorer,
+        )
+
+        result = worker.process_messages(limit=10)
+
+        self.assertEqual(result.scored_messages, 1)
+        self.assertEqual(result.queued_candidates, 1)
+        self.assertEqual(result.failures, 1)
+        self.assertEqual(message_source.failed, [(failed_message, "RuntimeError")])
+        self.assertNotIn("private message text", str(message_source.failed))
+        self.assertEqual(message_source.processed, [good_message])
 
     def test_extracts_high_confidence_items_and_routes_low_confidence_to_review(self):
         high_confidence = ExtractedItem(
@@ -158,7 +222,7 @@ class WorkerTests(unittest.TestCase):
         result = worker.process_candidates(limit=10)
 
         self.assertEqual(result.failures, 1)
-        self.assertEqual(llm_runs.failures, ["LM Studio unavailable"])
+        self.assertEqual(llm_runs.failures, ["RuntimeError"])
         self.assertEqual(candidate_repository.acknowledged, [])
 
 
