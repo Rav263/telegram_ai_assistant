@@ -243,13 +243,19 @@ class AppContextTests(unittest.TestCase):
 
         self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(client.model, "local-model")
+        self.assertEqual(client.max_tokens, 8192)
 
     def test_default_lm_studio_client_factory_uses_configured_model(self):
-        settings = replace(make_settings(), lm_studio_model="qwen2.5-7b-instruct")
+        settings = replace(
+            make_settings(),
+            lm_studio_model="qwen2.5-7b-instruct",
+            lm_studio_max_tokens=16384,
+        )
 
         client = default_lm_studio_client_factory(settings)
 
         self.assertEqual(client.model, "qwen2.5-7b-instruct")
+        self.assertEqual(client.max_tokens, 16384)
 
 
 def make_settings() -> Settings:

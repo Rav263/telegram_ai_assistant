@@ -254,6 +254,18 @@ class WorkerTests(unittest.TestCase):
                         "endpoint_host": "127.0.0.1",
                         "endpoint_path": "/v1/chat/completions",
                         "transport_error_type": "URLError",
+                        "timeout_seconds": 300.0,
+                        "max_tokens": 8192,
+                        "max_completion_tokens": 8192,
+                        "failure_stage": "response_schema",
+                        "response_keys": ["error", "object"],
+                        "choices_count": 0,
+                        "choice_keys": ["finish_reason", "message"],
+                        "finish_reason": "length",
+                        "message_keys": ["content", "role"],
+                        "content_type": "str",
+                        "content_length": 0,
+                        "reasoning_content_length": 120,
                         "raw": "secret",
                     },
                 )
@@ -268,6 +280,18 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(metadata["error_type"], "LMStudioError")
         self.assertEqual(metadata["endpoint_host"], "127.0.0.1")
         self.assertEqual(metadata["transport_error_type"], "URLError")
+        self.assertEqual(metadata["timeout_seconds"], 300.0)
+        self.assertEqual(metadata["max_tokens"], 8192)
+        self.assertEqual(metadata["max_completion_tokens"], 8192)
+        self.assertEqual(metadata["failure_stage"], "response_schema")
+        self.assertEqual(metadata["response_keys"], ["error", "object"])
+        self.assertEqual(metadata["choices_count"], 0)
+        self.assertEqual(metadata["choice_keys"], ["finish_reason", "message"])
+        self.assertEqual(metadata["finish_reason"], "length")
+        self.assertEqual(metadata["message_keys"], ["content", "role"])
+        self.assertEqual(metadata["content_type"], "str")
+        self.assertEqual(metadata["content_length"], 0)
+        self.assertEqual(metadata["reasoning_content_length"], 120)
         self.assertNotIn("raw", metadata)
         self.assertNotIn("private details", str(runtime_events.events))
 

@@ -103,6 +103,18 @@ class BotServicesTests(unittest.TestCase):
                         "endpoint_host": "127.0.0.1",
                         "endpoint_path": "/v1/chat/completions",
                         "transport_error_type": "URLError",
+                        "timeout_seconds": 300.0,
+                        "max_tokens": 8192,
+                        "max_completion_tokens": 8192,
+                        "failure_stage": "response_schema",
+                        "response_keys": ["error", "object"],
+                        "choices_count": 0,
+                        "choice_keys": ["finish_reason", "message"],
+                        "finish_reason": "length",
+                        "message_keys": ["content", "role"],
+                        "content_type": "str",
+                        "content_length": 0,
+                        "reasoning_content_length": 120,
                     },
                     created_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
                 )
@@ -114,6 +126,18 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("endpoint_host=127.0.0.1", text)
         self.assertIn("endpoint_path=/v1/chat/completions", text)
         self.assertIn("transport_error_type=URLError", text)
+        self.assertIn("timeout_seconds=300.0", text)
+        self.assertIn("max_tokens=8192", text)
+        self.assertIn("max_completion_tokens=8192", text)
+        self.assertIn("failure_stage=response_schema", text)
+        self.assertIn("response_keys=['error', 'object']", text)
+        self.assertIn("choices_count=0", text)
+        self.assertIn("choice_keys=['finish_reason', 'message']", text)
+        self.assertIn("finish_reason=length", text)
+        self.assertIn("message_keys=['content', 'role']", text)
+        self.assertIn("content_type=str", text)
+        self.assertIn("content_length=0", text)
+        self.assertIn("reasoning_content_length=120", text)
         self.assertNotIn("raw private text", text)
 
     def test_health_formats_component_statuses(self):

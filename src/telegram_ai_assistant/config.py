@@ -25,6 +25,7 @@ class Settings:
     telegram_ingest_chat_id: int = 0
     lm_studio_base_url: str = "http://127.0.0.1:1234/v1"
     lm_studio_model: str = "local-model"
+    lm_studio_max_tokens: int = 8192
     backfill_days: int = 30
     telegram_ingest_limit: int = 100
     telegram_ingest_debug_messages: bool = False
@@ -64,6 +65,11 @@ class Settings:
             database_url=_required(env, "DATABASE_URL"),
             lm_studio_base_url=env.get("LM_STUDIO_BASE_URL", cls.lm_studio_base_url),
             lm_studio_model=_optional_str(env, "LM_STUDIO_MODEL", cls.lm_studio_model),
+            lm_studio_max_tokens=_optional_positive_int(
+                env,
+                "LM_STUDIO_MAX_TOKENS",
+                cls.lm_studio_max_tokens,
+            ),
             backfill_days=_optional_int(env, "BACKFILL_DAYS", cls.backfill_days),
             telegram_ingest_limit=_optional_int(
                 env, "TELEGRAM_INGEST_LIMIT", cls.telegram_ingest_limit

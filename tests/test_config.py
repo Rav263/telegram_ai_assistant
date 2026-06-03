@@ -45,6 +45,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.lm_studio_model, "local-model")
+        self.assertEqual(settings.lm_studio_max_tokens, 8192)
         self.assertEqual(settings.backfill_days, 30)
 
     def test_loads_optional_lm_studio_backfill_and_ingest_limit_values(self):
@@ -52,6 +53,7 @@ class SettingsTests(unittest.TestCase):
             **VALID_ENV,
             "LM_STUDIO_BASE_URL": "http://lmstudio.local:1234/v1",
             "LM_STUDIO_MODEL": "qwen2.5-7b-instruct",
+            "LM_STUDIO_MAX_TOKENS": "16384",
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
@@ -74,6 +76,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.lm_studio_base_url, "http://lmstudio.local:1234/v1")
         self.assertEqual(settings.lm_studio_model, "qwen2.5-7b-instruct")
+        self.assertEqual(settings.lm_studio_max_tokens, 16384)
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
         self.assertTrue(settings.telegram_ingest_debug_messages)
@@ -221,6 +224,15 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "WORKER_BATCH_SIZE": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_lm_studio_max_tokens_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "LM_STUDIO_MAX_TOKENS": "0",
         }
 
         with self.assertRaises(ConfigError):

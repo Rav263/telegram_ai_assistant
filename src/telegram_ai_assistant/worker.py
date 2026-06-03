@@ -12,6 +12,18 @@ SAFE_LLM_FAILURE_METADATA_KEYS = (
     "endpoint_path",
     "http_status",
     "transport_error_type",
+    "timeout_seconds",
+    "max_tokens",
+    "max_completion_tokens",
+    "failure_stage",
+    "response_keys",
+    "choices_count",
+    "choice_keys",
+    "finish_reason",
+    "message_keys",
+    "content_type",
+    "content_length",
+    "reasoning_content_length",
 )
 
 
