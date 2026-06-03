@@ -32,6 +32,8 @@ class Settings:
     telegram_backfill_start_at: datetime | None = None
     telegram_backfill_end_at: datetime | None = None
     telegram_backfill_limit: int = 500
+    telegram_listener_allowed_channel_ids: frozenset[int] = frozenset()
+    telegram_listener_denied_chat_ids: frozenset[int] = frozenset()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -81,6 +83,14 @@ class Settings:
                 env,
                 "TELEGRAM_BACKFILL_LIMIT",
                 cls.telegram_backfill_limit,
+            ),
+            telegram_listener_allowed_channel_ids=_optional_int_set(
+                env,
+                "TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS",
+            ),
+            telegram_listener_denied_chat_ids=_optional_int_set(
+                env,
+                "TELEGRAM_LISTENER_DENIED_CHAT_IDS",
             ),
         )
 
@@ -156,3 +166,19 @@ def _optional_datetime(env: Mapping[str, str], name: str) -> datetime | None:
     if parsed.tzinfo is None:
         raise ConfigError(f"setting must include timezone: {name}")
     return parsed
+
+
+def _optional_int_set(env: Mapping[str, str], name: str) -> frozenset[int]:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return frozenset()
+    result: set[int] = set()
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        try:
+            result.add(int(part))
+        except ValueError as exc:
+            raise ConfigError(f"setting must be a comma-separated list of integers: {name}") from exc
+    return frozenset(result)
