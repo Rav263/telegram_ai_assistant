@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 from contextlib import redirect_stdout
 import unittest
 
@@ -24,6 +25,9 @@ class FailingContext:
 
 
 class CLIHealthOnlineTests(unittest.TestCase):
+    def tearDown(self):
+        logging.basicConfig(level=logging.WARNING, force=True)
+
     def test_health_command_uses_context_and_prints_report(self):
         output = io.StringIO()
 

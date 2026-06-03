@@ -1,4 +1,5 @@
 import io
+import logging
 from contextlib import redirect_stdout
 import unittest
 
@@ -19,6 +20,9 @@ class FailingContext:
 
 
 class CLIMigrateTests(unittest.TestCase):
+    def tearDown(self):
+        logging.basicConfig(level=logging.WARNING, force=True)
+
     def test_migrate_command_uses_context_and_returns_success(self):
         context = FakeContext()
 
