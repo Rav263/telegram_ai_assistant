@@ -37,6 +37,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_backfill_limit, 500)
         self.assertEqual(settings.telegram_listener_allowed_channel_ids, frozenset())
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset())
+        self.assertEqual(settings.log_level, "INFO")
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.backfill_days, 30)
@@ -56,6 +57,7 @@ class SettingsTests(unittest.TestCase):
             "TELEGRAM_BACKFILL_LIMIT": "250",
             "TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS": "-100111,-100222",
             "TELEGRAM_LISTENER_DENIED_CHAT_IDS": "123, 456",
+            "LOG_LEVEL": "debug",
         }
 
         settings = Settings.from_env(env)
@@ -78,6 +80,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_backfill_limit, 250)
         self.assertEqual(settings.telegram_listener_allowed_channel_ids, frozenset({-100111, -100222}))
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset({123, 456}))
+        self.assertEqual(settings.log_level, "DEBUG")
 
     def test_raises_when_required_setting_is_missing(self):
         env = dict(VALID_ENV)
@@ -185,6 +188,15 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "TELEGRAM_LISTENER_DENIED_CHAT_IDS": "123,not-an-int",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_log_level_is_invalid(self):
+        env = {
+            **VALID_ENV,
+            "LOG_LEVEL": "verbose",
         }
 
         with self.assertRaises(ConfigError):

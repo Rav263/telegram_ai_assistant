@@ -10,6 +10,7 @@ class ConfigError(ValueError):
 
 
 BOOTSTRAP_MODES = frozenset({"recent", "start_now", "cursor"})
+LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class Settings:
     telegram_backfill_limit: int = 500
     telegram_listener_allowed_channel_ids: frozenset[int] = frozenset()
     telegram_listener_denied_chat_ids: frozenset[int] = frozenset()
+    log_level: str = "INFO"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -92,6 +94,7 @@ class Settings:
                 env,
                 "TELEGRAM_LISTENER_DENIED_CHAT_IDS",
             ),
+            log_level=_optional_log_level(env, "LOG_LEVEL", cls.log_level),
         )
 
 
@@ -182,3 +185,14 @@ def _optional_int_set(env: Mapping[str, str], name: str) -> frozenset[int]:
         except ValueError as exc:
             raise ConfigError(f"setting must be a comma-separated list of integers: {name}") from exc
     return frozenset(result)
+
+
+def _optional_log_level(env: Mapping[str, str], name: str, default: str) -> str:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().upper()
+    if normalized not in LOG_LEVELS:
+        allowed = ", ".join(sorted(LOG_LEVELS))
+        raise ConfigError(f"setting must be one of {allowed}: {name}")
+    return normalized
