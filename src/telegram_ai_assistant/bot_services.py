@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .domain import ExtractedItem, ItemStatus, RuntimeEvent
+from .domain import ExtractedItem, ItemStatus, ItemType, RuntimeEvent
 from .health import HealthReport
 
 
@@ -53,11 +53,13 @@ class BotServices:
         health_report_provider: Any | None = None,
         item_query_repository: Any | None = None,
         item_repository: Any | None = None,
+        summary_query_repository: Any | None = None,
     ):
         self.runtime_event_repository = runtime_event_repository
         self.health_report_provider = health_report_provider
         self.item_query_repository = item_query_repository
         self.item_repository = item_repository
+        self.summary_query_repository = summary_query_repository
 
     def logs(self) -> str:
         events = self.runtime_event_repository.latest_events(limit=10)
@@ -81,8 +83,13 @@ class BotServices:
             reply_markup=_main_menu_markup(),
         )
 
-    def summary(self) -> str:
-        return "Command /summary is not implemented yet."
+    def summary(self) -> BotResponse:
+        if self.summary_query_repository is None:
+            return BotResponse("Summary service is not configured.", _summary_markup())
+        items = self.summary_query_repository.list_summary_items(limit=20)
+        if not items:
+            return BotResponse("No summary items yet.", _summary_markup())
+        return BotResponse(_format_summary(items), _summary_markup())
 
     def tasks(self) -> BotResponse:
         if self.item_query_repository is None:
@@ -197,6 +204,51 @@ def _main_menu_markup() -> dict[str, object]:
             ],
             [
                 {"text": "Settings", "callback_data": "menu:settings:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ],
+        ]
+    }
+
+
+def _format_summary(items: list[ExtractedItem]) -> str:
+    sections = [
+        ("Tasks and commitments:", _summary_task_items(items)),
+        ("Waiting:", [item for item in items if item.item_type == ItemType.WAITING_FOR]),
+        ("Thoughts:", [item for item in items if item.item_type in (ItemType.THOUGHT, ItemType.USEFUL_CONTEXT)]),
+    ]
+    lines = ["Summary:"]
+    for title, section_items in sections:
+        if not section_items:
+            continue
+        lines.append(title)
+        for item in section_items[:8]:
+            due = f" due={item.due_at.isoformat()}" if item.due_at is not None else ""
+            lines.append(f"- {item.title} [{item.item_type.value}/{item.status.value}]{due}")
+    return "\n".join(lines)
+
+
+def _summary_task_items(items: list[ExtractedItem]) -> list[ExtractedItem]:
+    return [
+        item
+        for item in items
+        if item.item_type
+        in (
+            ItemType.TASK,
+            ItemType.COMMITMENT,
+            ItemType.REMINDER,
+        )
+    ]
+
+
+def _summary_markup() -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Tasks", "callback_data": "menu:tasks:0"},
+                {"text": "Review", "callback_data": "menu:review:0"},
+            ],
+            [
+                {"text": "Refresh", "callback_data": "menu:summary:0"},
                 {"text": "Help", "callback_data": "menu:help:0"},
             ],
         ]

@@ -489,6 +489,49 @@ class ItemQueryRepositoryTests(unittest.TestCase):
         self.assertEqual(items[0].status, ItemStatus.OPEN)
         self.assertEqual(items[0].sources, (SourceRef(chat_id=100, telegram_message_id=200),))
 
+    def test_list_summary_items_reads_active_items_and_thoughts(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchall_result = [
+            {
+                "item_id": "task-1",
+                "item_type": "task",
+                "title": "Send report",
+                "description": "Prepare report",
+                "confidence": 0.91,
+                "status": "open",
+                "rationale": "Owner committed.",
+                "due_at": None,
+                "source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+                "metadata": {},
+            },
+            {
+                "item_id": "thought-1",
+                "item_type": "thought",
+                "title": "Consider pricing",
+                "description": "Pricing concern.",
+                "confidence": 0.82,
+                "status": "open",
+                "rationale": "Important thought.",
+                "due_at": None,
+                "source_refs": [],
+                "metadata": {},
+            },
+        ]
+
+        items = ItemQueryRepository(connection, account_id="main").list_summary_items(limit=20)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from extracted_items", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertIn("item_type = any", normalized_sql)
+        self.assertIn("status = any", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 20)
+        self.assertIn("thought", params["item_types"])
+        self.assertEqual(items[0].item_id, "task-1")
+        self.assertEqual(items[1].item_type, ItemType.THOUGHT)
+
 
 class ReviewRepositoryTests(unittest.TestCase):
     def test_enqueue_item_saves_candidate_item_and_review_entry(self):

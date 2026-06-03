@@ -26,6 +26,16 @@ class FakeItemQueryRepository:
         return self.items[:limit]
 
 
+class FakeSummaryQueryRepository:
+    def __init__(self, items=()):
+        self.items = list(items)
+        self.calls = []
+
+    def list_summary_items(self, *, limit):
+        self.calls.append(("list_summary_items", limit))
+        return self.items[:limit]
+
+
 class FakeItemRepository:
     def __init__(self):
         self.status_changes = []
@@ -162,7 +172,51 @@ class BotServicesTests(unittest.TestCase):
     def test_unimplemented_commands_return_stable_message(self):
         services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
 
-        self.assertEqual(services.summary(), "Command /summary is not implemented yet.")
+        self.assertEqual(services.review(), "Command /review is not implemented yet.")
+
+    def test_summary_groups_items_and_includes_navigation_buttons(self):
+        query = FakeSummaryQueryRepository(
+            [
+                make_task(item_id="task-1", item_type=ItemType.TASK, title="Send report"),
+                make_task(item_id="commitment-1", item_type=ItemType.COMMITMENT, title="Call Alice"),
+                make_task(item_id="wait-1", item_type=ItemType.WAITING_FOR, title="Waiting for invoice"),
+                make_task(item_id="thought-1", item_type=ItemType.THOUGHT, title="Pricing concern"),
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            summary_query_repository=query,
+        )
+
+        response = services.summary()
+
+        self.assertEqual(query.calls, [("list_summary_items", 20)])
+        self.assertIn("Summary:", response.text)
+        self.assertIn("Tasks and commitments:", response.text)
+        self.assertIn("Send report", response.text)
+        self.assertIn("Call Alice", response.text)
+        self.assertIn("Waiting:", response.text)
+        self.assertIn("Waiting for invoice", response.text)
+        self.assertIn("Thoughts:", response.text)
+        self.assertIn("Pricing concern", response.text)
+        self.assertEqual(
+            response.reply_markup["inline_keyboard"][-1],
+            [
+                {"text": "Refresh", "callback_data": "menu:summary:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ],
+        )
+
+    def test_summary_returns_empty_message_when_no_items_exist(self):
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            summary_query_repository=FakeSummaryQueryRepository(),
+        )
+
+        response = services.summary()
+
+        self.assertEqual(response.text, "No summary items yet.")
+        self.assertIsNotNone(response.reply_markup)
 
     def test_help_lists_commands_with_main_menu_buttons(self):
         services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())

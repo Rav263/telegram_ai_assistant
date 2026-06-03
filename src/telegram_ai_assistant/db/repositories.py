@@ -705,6 +705,50 @@ class ItemQueryRepository:
         }
         return [_item_from_row(row) for row in _fetchall(self._connection, sql, params)]
 
+    def list_summary_items(self, *, limit: int = 20) -> list[ExtractedItem]:
+        sql = """
+            SELECT
+                item_id,
+                item_type,
+                title,
+                description,
+                confidence,
+                status,
+                rationale,
+                due_at,
+                source_refs,
+                metadata
+            FROM extracted_items
+            WHERE account_id = %(account_id)s
+              AND item_type = ANY(%(item_types)s)
+              AND status = ANY(%(statuses)s)
+            ORDER BY
+                due_at ASC NULLS LAST,
+                updated_at DESC,
+                confidence DESC,
+                item_id ASC
+            LIMIT %(limit)s
+        """
+        params = {
+            "account_id": self._account_id,
+            "item_types": [
+                ItemType.TASK.value,
+                ItemType.COMMITMENT.value,
+                ItemType.REMINDER.value,
+                ItemType.WAITING_FOR.value,
+                ItemType.THOUGHT.value,
+                ItemType.USEFUL_CONTEXT.value,
+            ],
+            "statuses": [
+                ItemStatus.OPEN.value,
+                ItemStatus.IN_PROGRESS.value,
+                ItemStatus.PARTIALLY_COMPLETED.value,
+                ItemStatus.WAITING_FOR.value,
+            ],
+            "limit": limit,
+        }
+        return [_item_from_row(row) for row in _fetchall(self._connection, sql, params)]
+
 
 class ReviewRepository:
     def __init__(self, connection: Connection, *, account_id: str):
