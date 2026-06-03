@@ -43,6 +43,10 @@ TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
+WORKER_BATCH_SIZE=25
+WORKER_POLL_INTERVAL_SECONDS=10
+WORKER_ITEM_AUTO_APPLY_THRESHOLD=0.8
+WORKER_STATUS_AUTO_APPLY_THRESHOLD=0.8
 LOG_LEVEL=INFO
 ```
 
@@ -106,6 +110,29 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run listener
 
 Keep `run ingestor` available as cursor catch-up after the machine sleeps or the listener is stopped.
 
+## Worker
+
+Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, and prints JSON counts.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker --once
+```
+
+Use `telegram-ai-assistant run worker` as the daemon process. It repeats the same cycle and sleeps for `WORKER_POLL_INTERVAL_SECONDS` between cycles.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker
+```
+
+Worker tuning variables:
+
+- `WORKER_BATCH_SIZE` controls how many messages/candidates one cycle processes, defaulting to 25.
+- `WORKER_POLL_INTERVAL_SECONDS` controls daemon sleep, defaulting to 10.
+- `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
+- `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
+
+LLM failures and worker errors are recorded as sanitized runtime events. Ask the owner-only bot for `/logs` to see the latest warning/error runtime events without Telegram message text, raw prompts, bot tokens, API hashes, database URLs, or raw tracebacks.
+
 ## Backfill
 
 Use `telegram-ai-assistant run backfill` for explicit historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch.
@@ -147,10 +174,10 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli health
 
 ## Docker
 
-Build and start the production listener stack:
+Build and start the production listener and worker stack:
 
 ```bash
-docker compose up -d postgres app-listener
+docker compose up -d postgres app-listener app-worker
 ```
 
 For Docker, set `LOG_LEVEL` in `.env` before starting the service. Use `INFO` for normal operation and `DEBUG` only while diagnosing listener scope or message persistence issues.

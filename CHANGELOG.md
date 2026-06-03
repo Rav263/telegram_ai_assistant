@@ -27,3 +27,4 @@
 - Added live Telegram update listener with chat/channel allow-deny policy.
 - Added Docker production runtime for the listener and Postgres.
 - Added configurable application log levels through `LOG_LEVEL` and CLI `--log-level`.
+- Added production worker runtime for message processing, LM Studio extraction, sanitized runtime events, bot `/logs`, and Docker `app-worker`.
