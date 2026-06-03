@@ -9,10 +9,11 @@ from .app_context import AppContext
 from .config import Settings
 from .health import ComponentHealth, HealthChecker, HealthReport, HealthStatus
 from .ingestion.backfill import BackfillRunResult
+from .ingestion.listener import ListenerRunResult
 from .ingestion.live import IngestionRunResult
 
 
-PROCESS_NAMES = ("ingestor", "backfill", "worker", "bot", "scheduler", "all")
+PROCESS_NAMES = ("ingestor", "backfill", "listener", "worker", "bot", "scheduler", "all")
 Runner = Callable[[Settings], int]
 
 
@@ -48,6 +49,16 @@ def run_backfill(settings: Settings, *, context_factory=AppContext.from_settings
     return 0
 
 
+def run_listener(settings: Settings, *, context_factory=AppContext.from_settings) -> int:
+    try:
+        result = asyncio.run(context_factory(settings).run_listener_forever())
+    except Exception as exc:
+        print(f"listener failed: {type(exc).__name__}")
+        return 1
+    print(json.dumps(_listener_result_payload(result), ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def run_worker(settings: Settings) -> int:
     return 0
 
@@ -69,6 +80,7 @@ def run_all(settings: Settings) -> int:
 DEFAULT_RUNNERS: Mapping[str, Runner] = {
     "ingestor": run_ingestor,
     "backfill": run_backfill,
+    "listener": run_listener,
     "worker": run_worker,
     "bot": run_bot,
     "scheduler": run_scheduler,
@@ -87,6 +99,14 @@ def offline_health_report() -> HealthReport:
         }
     )
     return checker.check()
+
+
+def _listener_result_payload(result: ListenerRunResult) -> dict[str, Any]:
+    return {
+        "process": "listener",
+        "account_id": result.account_id,
+        "status": result.status,
+    }
 
 
 def _backfill_result_payload(result: BackfillRunResult) -> dict[str, Any]:

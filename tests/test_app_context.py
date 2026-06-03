@@ -125,6 +125,38 @@ class AppContextTests(unittest.TestCase):
 
         self.assertEqual(factory.opened, 0)
 
+    def test_run_listener_forever_builds_service_with_settings(self):
+        factory = FakeConnectionFactory()
+        captured = {}
+
+        class FakeListener:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            async def run_forever(self):
+                return "result"
+
+        settings = replace(
+            make_settings(),
+            telegram_listener_allowed_channel_ids=frozenset({-100111}),
+            telegram_listener_denied_chat_ids=frozenset({1002}),
+        )
+        context = AppContext(
+            settings=settings,
+            connection_factory=factory,
+            listener_factory=FakeListener,
+            telegram_client_factory=lambda settings: "client-factory",
+        )
+
+        result = asyncio.run(context.run_listener_forever())
+
+        self.assertEqual(result, "result")
+        self.assertEqual(captured["account_id"], "owner")
+        self.assertEqual(captured["policy"].allowed_channel_ids, frozenset({-100111}))
+        self.assertEqual(captured["policy"].denied_chat_ids, frozenset({1002}))
+        self.assertIs(captured["connection_factory"], factory)
+        self.assertEqual(captured["client_factory"], "client-factory")
+
 
 def make_settings() -> Settings:
     return Settings(

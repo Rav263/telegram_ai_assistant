@@ -7,12 +7,14 @@ import unittest
 from telegram_ai_assistant.config import Settings
 from telegram_ai_assistant.domain import MessageDirection
 from telegram_ai_assistant.ingestion.backfill import BackfillRunResult
+from telegram_ai_assistant.ingestion.listener import ListenerRunResult
 from telegram_ai_assistant.ingestion.live import IngestedMessageDebug, IngestionRunResult
 from telegram_ai_assistant.runtime import (
     PROCESS_NAMES,
     offline_health_report,
     run_backfill,
     run_ingestor,
+    run_listener,
     run_process,
 )
 
@@ -34,7 +36,7 @@ class RuntimeTests(unittest.TestCase):
     def test_all_declared_processes_have_default_runners(self):
         self.assertEqual(
             PROCESS_NAMES,
-            ("ingestor", "backfill", "worker", "bot", "scheduler", "all"),
+            ("ingestor", "backfill", "listener", "worker", "bot", "scheduler", "all"),
         )
 
     def test_offline_health_report_contains_core_components(self):
@@ -178,6 +180,38 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("backfill failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+
+    def test_run_listener_executes_context_and_prints_startup_result(self):
+        calls = []
+
+        class FakeContext:
+            async def run_listener_forever(self):
+                calls.append("run")
+                return ListenerRunResult(account_id="owner", status="stopped")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_listener(make_settings(), context_factory=lambda settings: FakeContext())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["run"])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["process"], "listener")
+        self.assertEqual(payload["account_id"], "owner")
+        self.assertEqual(payload["status"], "stopped")
+
+    def test_run_listener_failure_returns_nonzero_without_secret_values(self):
+        class FailingContext:
+            async def run_listener_forever(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_listener(make_settings(), context_factory=lambda settings: FailingContext())
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("listener failed", output.getvalue())
         self.assertNotIn("secret-token", output.getvalue())
 
 

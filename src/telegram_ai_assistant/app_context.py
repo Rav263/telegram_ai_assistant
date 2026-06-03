@@ -8,6 +8,8 @@ from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
 from .health import HealthChecker, HealthReport, lm_studio_health_check, postgres_health_check
 from .ingestion.backfill import BackfillService
+from .ingestion.chat_policy import ChatIngestionPolicy
+from .ingestion.listener import LiveUpdateListener
 from .ingestion.live import LiveIngestor
 from .ingestion.telethon_adapter import TelethonIngestionAdapter
 
@@ -31,6 +33,7 @@ class AppContext:
     health_transport: Callable[[str], bytes] | None = None
     ingestor_factory: Any = LiveIngestor
     backfill_factory: Any = BackfillService
+    listener_factory: Any = LiveUpdateListener
     telegram_client_factory: Callable[[Settings], Any] = default_telegram_client_factory
 
     @classmethod
@@ -98,3 +101,15 @@ class AppContext:
             client_factory=self.telegram_client_factory(self.settings),
         )
         return await backfill.run_once()
+
+    async def run_listener_forever(self):
+        listener = self.listener_factory(
+            account_id=self.settings.telegram_ingest_account_id,
+            connection_factory=self.connection_factory,
+            client_factory=self.telegram_client_factory(self.settings),
+            policy=ChatIngestionPolicy(
+                allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
+                denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
+            ),
+        )
+        return await listener.run_forever()
