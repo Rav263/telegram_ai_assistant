@@ -112,14 +112,15 @@ class LiveUpdateListenerTests(unittest.TestCase):
         listener, repositories = make_listener(client)
         asyncio.run(listener.run_forever())
 
-        asyncio.run(
-            client.handler(
-                FakeEvent(
-                    RawMessage(50),
-                    ChatMetadata(chat_id=1001, chat_type="private", title="Alice"),
+        with self.assertLogs("telegram_ai_assistant.ingestion.listener", level="INFO") as logs:
+            asyncio.run(
+                client.handler(
+                    FakeEvent(
+                        RawMessage(50, text="secret text"),
+                        ChatMetadata(chat_id=1001, chat_type="private", title="Alice"),
+                    )
                 )
             )
-        )
 
         self.assertEqual(repositories.account.accounts, [("owner", None, "")])
         self.assertEqual(repositories.chat.chats, [("owner", 1001, "Alice", "private")])
@@ -133,11 +134,16 @@ class LiveUpdateListenerTests(unittest.TestCase):
                     sender_id=3001,
                     direction=MessageDirection.INCOMING,
                     sent_at=datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
-                    text="hello",
+                    text="secret text",
                 )
             ],
         )
         self.assertEqual(repositories.chat.updated_cursors[-1][2], 50)
+        log_output = "\n".join(logs.output)
+        self.assertIn("saved live update", log_output)
+        self.assertIn("chat_id=1001", log_output)
+        self.assertIn("telegram_message_id=50", log_output)
+        self.assertNotIn("secret text", log_output)
 
     def test_handler_does_not_move_cursor_backwards(self):
         client = FakeListenerClient()
@@ -164,19 +170,25 @@ class LiveUpdateListenerTests(unittest.TestCase):
         )
         asyncio.run(listener.run_forever())
 
-        asyncio.run(
-            client.handler(
-                FakeEvent(
-                    RawMessage(50),
-                    ChatMetadata(chat_id=1001, chat_type="private"),
+        with self.assertLogs("telegram_ai_assistant.ingestion.listener", level="DEBUG") as logs:
+            asyncio.run(
+                client.handler(
+                    FakeEvent(
+                        RawMessage(50, text="secret text"),
+                        ChatMetadata(chat_id=1001, chat_type="private"),
+                    )
                 )
             )
-        )
 
         self.assertEqual(repositories.account.accounts, [])
         self.assertEqual(repositories.chat.chats, [])
         self.assertEqual(repositories.messages.messages, [])
         self.assertEqual(repositories.chat.updated_cursors, [])
+        log_output = "\n".join(logs.output)
+        self.assertIn("skipped live update", log_output)
+        self.assertIn("chat_id=1001", log_output)
+        self.assertIn("chat_type=private", log_output)
+        self.assertNotIn("secret text", log_output)
 
 
 def make_listener(client, policy=None):

@@ -127,8 +127,9 @@ class RuntimeTests(unittest.TestCase):
                 raise RuntimeError("failed with secret-token")
 
         output = io.StringIO()
-        with redirect_stdout(output):
-            exit_code = run_ingestor(make_settings(), context_factory=lambda settings: FailingContext())
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR"):
+            with redirect_stdout(output):
+                exit_code = run_ingestor(make_settings(), context_factory=lambda settings: FailingContext())
 
         self.assertEqual(exit_code, 1)
         self.assertIn("ingestor failed", output.getvalue())
@@ -175,8 +176,9 @@ class RuntimeTests(unittest.TestCase):
                 raise RuntimeError("failed with secret-token")
 
         output = io.StringIO()
-        with redirect_stdout(output):
-            exit_code = run_backfill(make_settings(), context_factory=lambda settings: FailingContext())
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR"):
+            with redirect_stdout(output):
+                exit_code = run_backfill(make_settings(), context_factory=lambda settings: FailingContext())
 
         self.assertEqual(exit_code, 1)
         self.assertIn("backfill failed", output.getvalue())
@@ -207,12 +209,68 @@ class RuntimeTests(unittest.TestCase):
                 raise RuntimeError("failed with secret-token")
 
         output = io.StringIO()
-        with redirect_stdout(output):
-            exit_code = run_listener(make_settings(), context_factory=lambda settings: FailingContext())
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR") as logs:
+            with redirect_stdout(output):
+                exit_code = run_listener(make_settings(), context_factory=lambda settings: FailingContext())
 
+        log_output = "\n".join(logs.output)
         self.assertEqual(exit_code, 1)
         self.assertIn("listener failed", output.getvalue())
         self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("listener failed", log_output)
+        self.assertIn("RuntimeError", log_output)
+        self.assertNotIn("secret-token", log_output)
+
+    def test_run_ingestor_failure_logs_error_without_secret_values(self):
+        class FailingContext:
+            async def run_ingestor_once(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR") as logs:
+            with redirect_stdout(output):
+                exit_code = run_ingestor(make_settings(), context_factory=lambda settings: FailingContext())
+
+        log_output = "\n".join(logs.output)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("ingestor failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("ingestor failed", log_output)
+        self.assertIn("RuntimeError", log_output)
+        self.assertNotIn("secret-token", log_output)
+
+    def test_run_backfill_failure_logs_error_without_secret_values(self):
+        class FailingContext:
+            async def run_backfill_once(self):
+                raise RuntimeError("failed with secret-token")
+
+        output = io.StringIO()
+        with self.assertLogs("telegram_ai_assistant.runtime", level="ERROR") as logs:
+            with redirect_stdout(output):
+                exit_code = run_backfill(make_settings(), context_factory=lambda settings: FailingContext())
+
+        log_output = "\n".join(logs.output)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("backfill failed", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+        self.assertIn("backfill failed", log_output)
+        self.assertIn("RuntimeError", log_output)
+        self.assertNotIn("secret-token", log_output)
+
+    def test_run_listener_success_logs_process_lifecycle(self):
+        class FakeContext:
+            async def run_listener_forever(self):
+                return ListenerRunResult(account_id="owner", status="stopped")
+
+        output = io.StringIO()
+        with self.assertLogs("telegram_ai_assistant.runtime", level="INFO") as logs:
+            with redirect_stdout(output):
+                exit_code = run_listener(make_settings(), context_factory=lambda settings: FakeContext())
+
+        log_output = "\n".join(logs.output)
+        self.assertEqual(exit_code, 0)
+        self.assertIn("listener started", log_output)
+        self.assertIn("listener stopped", log_output)
 
 
 def make_settings() -> Settings:

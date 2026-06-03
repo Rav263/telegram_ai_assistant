@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +11,9 @@ from telegram_ai_assistant.db.repositories import AccountRepository, ChatReposit
 from telegram_ai_assistant.ingestion.chat_policy import ChatIngestionPolicy, ChatMetadata
 from telegram_ai_assistant.ingestion.normalizer import normalize_telegram_message
 from telegram_ai_assistant.ingestion.ports import IngestionClient
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,15 +53,23 @@ class LiveUpdateListener:
     async def run_forever(self) -> ListenerRunResult:
         client = await _resolve_client(self.client_factory())
         try:
+            logger.info("live listener starting account_id=%s", self.account_id)
             await client.listen_new_messages(self.handle_update)
             await client.run_until_disconnected()
         finally:
             await client.close()
+            logger.info("live listener stopped account_id=%s", self.account_id)
         return ListenerRunResult(account_id=self.account_id, status="stopped")
 
     async def handle_update(self, event: object) -> None:
         chat_metadata = self.chat_metadata_extractor(event)
         if not self.policy.can_read(chat_metadata):
+            logger.debug(
+                "skipped live update account_id=%s chat_id=%s chat_type=%s",
+                self.account_id,
+                chat_metadata.chat_id,
+                chat_metadata.chat_type,
+            )
             return
 
         raw_message = self.message_extractor(event)
@@ -85,6 +97,14 @@ class LiveUpdateListener:
                 chat_metadata.chat_id,
                 max(current_cursor, message.telegram_message_id),
                 self.now(),
+            )
+            logger.info(
+                "saved live update account_id=%s chat_id=%s telegram_message_id=%s sender_id=%s direction=%s",
+                self.account_id,
+                chat_metadata.chat_id,
+                message.telegram_message_id,
+                message.sender_id,
+                message.direction.value,
             )
 
 
