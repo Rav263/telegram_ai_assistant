@@ -151,11 +151,18 @@ The bot persists the latest processed Telegram `update_id` in `bot_runtime_state
 
 Implemented production commands:
 
+- `/start` and `/help` show the command list and inline menu.
+- `/summary` shows a structured summary from stored extracted items.
+- `/review` lists pending low-confidence reviews and supports approve/reject callbacks.
+- `/tasks` lists open task-like items and includes inline buttons to mark each item completed, partially completed, or cancelled.
 - `/logs` shows sanitized warning/error runtime events.
 - `/health` shows Postgres and LM Studio health.
-- `/tasks` lists open task-like items and includes inline buttons to mark each item completed, partially completed, or cancelled.
 
-Other routed commands currently return a stable "not implemented yet" response until their product services are built.
+Implemented MVP operational commands:
+
+- `/backfill` shows bounded backfill presets and latest job status.
+- `/blacklist` shows listener allow/deny policy and env-based change instructions.
+- `/settings` shows non-secret runtime settings.
 
 ## Backfill
 

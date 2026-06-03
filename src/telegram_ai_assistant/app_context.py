@@ -11,6 +11,7 @@ from .bot_services import BotServices
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
 from .db.repositories import (
+    BackfillJobQueryRepository,
     BotRuntimeStateRepository,
     CandidateRepository,
     ItemRepository,
@@ -180,20 +181,32 @@ class AppContext:
         with self.connection_factory.connection() as connection:
             runtime_event_repository = RuntimeEventRepository(connection)
             bot_api = self.bot_api_factory(self.settings)
+            item_query_repository = ItemQueryRepository(
+                connection,
+                account_id=self.settings.telegram_ingest_account_id,
+            )
+            review_repository = ReviewRepository(
+                connection,
+                account_id=self.settings.telegram_ingest_account_id,
+            )
             router = BotRouter(
                 access=BotAccessController(self.settings.telegram_allowed_user_id),
                 bot_api=bot_api,
                 services=BotServices(
                     runtime_event_repository=runtime_event_repository,
                     health_report_provider=self.online_health_report,
-                    item_query_repository=ItemQueryRepository(
-                        connection,
-                        account_id=self.settings.telegram_ingest_account_id,
-                    ),
+                    item_query_repository=item_query_repository,
                     item_repository=ItemRepository(
                         connection,
                         account_id=self.settings.telegram_ingest_account_id,
                     ),
+                    summary_query_repository=item_query_repository,
+                    review_repository=review_repository,
+                    backfill_job_query_repository=BackfillJobQueryRepository(
+                        connection,
+                        account_id=self.settings.telegram_ingest_account_id,
+                    ),
+                    settings_snapshot=self.settings,
                 ),
             )
             runtime = self.bot_runtime_factory(

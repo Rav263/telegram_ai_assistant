@@ -32,3 +32,4 @@
 - Added safe LM Studio failure diagnostics, production long-polling bot runtime, bot `/health`, and Docker `app-bot`.
 - Added persistent bot update offsets, Telegram Bot API retry backoff, long-message splitting, and real `/tasks` status actions.
 - Added configurable LM Studio chat completion model through `LM_STUDIO_MODEL`.
+- Added bot command suite with `/start`, `/help`, `/summary`, `/review`, `/backfill`, `/blacklist`, `/settings`, and inline menu actions.

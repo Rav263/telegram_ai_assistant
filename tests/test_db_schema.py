@@ -136,6 +136,14 @@ class DBSchemaTests(unittest.TestCase):
             schema,
         )
         self.assertIn(
+            "state text not null default 'pending'",
+            schema,
+        )
+        self.assertIn(
+            "resolved_at timestamptz",
+            schema,
+        )
+        self.assertIn(
             "alter table review_queue add column if not exists review_type text not null default 'item'",
             schema,
         )
