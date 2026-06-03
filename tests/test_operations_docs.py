@@ -27,6 +27,8 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("TELEGRAM_SESSION_PATH", text)
         self.assertIn("TELEGRAM_INGEST_CHAT_ID", text)
         self.assertIn("TELEGRAM_INGEST_LIMIT", text)
+        self.assertIn("TELEGRAM_INGEST_BOOTSTRAP_MODE", text)
+        self.assertIn("TELEGRAM_INGEST_BOOTSTRAP_DAYS", text)
         self.assertIn("telegram-ai-assistant run ingestor", text)
 
 

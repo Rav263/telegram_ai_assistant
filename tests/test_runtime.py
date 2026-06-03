@@ -48,6 +48,9 @@ class RuntimeTests(unittest.TestCase):
                     requested_min_id=200,
                     saved_count=2,
                     latest_message_id=202,
+                    bootstrap_mode="cursor",
+                    oldest_sent_at=datetime(2026, 6, 2, 9, 1, tzinfo=UTC),
+                    newest_sent_at=datetime(2026, 6, 2, 9, 2, tzinfo=UTC),
                 )
 
         output = io.StringIO()
@@ -58,6 +61,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls, ["run"])
         self.assertIn('"saved_count": 2', output.getvalue())
         self.assertIn('"latest_message_id": 202', output.getvalue())
+        self.assertIn('"bootstrap_mode": "cursor"', output.getvalue())
+        self.assertIn('"oldest_sent_at": "2026-06-02T09:01:00+00:00"', output.getvalue())
+        self.assertIn('"newest_sent_at": "2026-06-02T09:02:00+00:00"', output.getvalue())
         self.assertNotIn("debug_messages", output.getvalue())
 
     def test_run_ingestor_prints_debug_messages_when_result_contains_them(self):

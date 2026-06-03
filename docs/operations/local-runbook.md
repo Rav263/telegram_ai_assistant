@@ -32,6 +32,8 @@ TELEGRAM_INGEST_ACCOUNT_ID=owner
 TELEGRAM_INGEST_CHAT_ID=123456789
 TELEGRAM_INGEST_LIMIT=100
 TELEGRAM_INGEST_DEBUG_MESSAGES=false
+TELEGRAM_INGEST_BOOTSTRAP_MODE=recent
+TELEGRAM_INGEST_BOOTSTRAP_DAYS=30
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 BACKFILL_DAYS=30
@@ -50,13 +52,21 @@ BACKFILL_DAYS=30
 
 For this release, `telegram-ai-assistant run ingestor` is a one-shot single-chat command for controlled unread smoke testing. It reads only `TELEGRAM_INGEST_CHAT_ID`, uses `last_ingested_message_id` from the `chats` table as the cursor, saves new messages, advances the cursor, and exits.
 
+When the chat cursor is empty, `TELEGRAM_INGEST_BOOTSTRAP_MODE` controls the first run:
+
+- `recent` imports only messages newer than `TELEGRAM_INGEST_BOOTSTRAP_DAYS` days ago, defaulting to 30 days.
+- `start_now` moves the cursor to the current latest message without saving old messages.
+- `cursor` preserves raw cursor behavior and starts from message id `0`.
+
+After the cursor is non-empty, every mode reads only messages newer than `last_ingested_message_id`.
+
 Run it only against a controlled non-secret chat until the manual unread smoke test passes:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run ingestor
 ```
 
-The command prints JSON with `saved_count`, `requested_min_id`, and `latest_message_id`. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
+The command prints JSON with `saved_count`, `requested_min_id`, `latest_message_id`, `bootstrap_mode`, and optional `oldest_sent_at`/`newest_sent_at` period bounds. It must not print message text, bot tokens, API hashes, database passwords, or Telegram session contents.
 
 Set `TELEGRAM_INGEST_DEBUG_MESSAGES=true` only for local troubleshooting when you need the command output to include `debug_messages` with saved message IDs, sender IDs, direction, timestamp, text, and caption. Turn it back off after debugging so routine logs do not contain private message text.
 

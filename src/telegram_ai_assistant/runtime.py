@@ -84,7 +84,12 @@ def _ingestion_result_payload(result: IngestionRunResult) -> dict[str, Any]:
         "requested_min_id": result.requested_min_id,
         "saved_count": result.saved_count,
         "latest_message_id": result.latest_message_id,
+        "bootstrap_mode": result.bootstrap_mode,
     }
+    if result.oldest_sent_at is not None:
+        payload["oldest_sent_at"] = result.oldest_sent_at.isoformat()
+    if result.newest_sent_at is not None:
+        payload["newest_sent_at"] = result.newest_sent_at.isoformat()
     if result.debug_messages:
         payload["debug_messages"] = [
             {

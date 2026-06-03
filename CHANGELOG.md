@@ -22,3 +22,4 @@
 - Added production wiring base for `.env` loading, Postgres migrations, and online health checks.
 - Added one-shot live Telegram ingestor with chat cursor persistence.
 - Added opt-in ingestor debug output for saved message text and captions.
+- Added bounded live ingestion bootstrap modes for recent import and start-from-now smoke tests.
