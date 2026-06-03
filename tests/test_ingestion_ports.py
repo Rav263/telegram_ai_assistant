@@ -13,8 +13,17 @@ class FakeTelegramClient:
         self.messages = ["first", "second"]
         self.latest_message = FakeMessage(42)
 
-    async def iter_messages(self, chat_id, *, limit=None, min_id=None, offset_date=None, reverse=False):
-        self.calls.append(("iter_messages", chat_id, limit, min_id, offset_date, reverse))
+    async def iter_messages(
+        self,
+        chat_id,
+        *,
+        limit=None,
+        min_id=None,
+        max_id=None,
+        offset_date=None,
+        reverse=False,
+    ):
+        self.calls.append(("iter_messages", chat_id, limit, min_id, max_id, offset_date, reverse))
         for message in self.messages:
             yield message
 
@@ -36,8 +45,9 @@ class FakeTelegramClient:
 
 
 class FakeMessage:
-    def __init__(self, message_id):
+    def __init__(self, message_id, date=None):
         self.id = message_id
+        self.date = date
 
 
 class FakeTelethonClient(FakeTelegramClient):
@@ -73,8 +83,8 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
         self.assertEqual(
             fake_client.calls,
             [
-                ("iter_messages", 1001, 2, None, None, False),
-                ("iter_messages", 1001, 10, 40, None, True),
+                ("iter_messages", 1001, 2, None, None, None, False),
+                ("iter_messages", 1001, 10, 40, None, None, True),
             ],
         )
 
@@ -91,8 +101,39 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
         self.assertEqual(
             fake_client.calls,
             [
-                ("iter_messages", 1001, 10, None, since, True),
+                ("iter_messages", 1001, 10, None, None, since, True),
                 ("get_messages", 1001, 1),
+            ],
+        )
+
+    def test_backfill_messages_use_date_range_and_stop_at_start_bound(self):
+        start_at = datetime(2022, 1, 1, tzinfo=UTC)
+        end_at = datetime(2022, 2, 1, tzinfo=UTC)
+        fake_client = FakeTelegramClient()
+        fake_client.messages = [
+            FakeMessage(30, datetime(2022, 1, 20, tzinfo=UTC)),
+            FakeMessage(20, datetime(2022, 1, 5, tzinfo=UTC)),
+            FakeMessage(10, datetime(2021, 12, 31, tzinfo=UTC)),
+        ]
+        client = ReadOnlyIngestionClient(fake_client, guard=ReadOnlyTelegramGuard())
+
+        messages = asyncio.run(
+            collect(
+                client.iter_backfill_messages(
+                    chat_id=1001,
+                    start_at=start_at,
+                    end_at=end_at,
+                    before_message_id=500,
+                    limit=100,
+                )
+            )
+        )
+
+        self.assertEqual([message.id for message in messages], [30, 20])
+        self.assertEqual(
+            fake_client.calls,
+            [
+                ("iter_messages", 1001, 100, None, 500, end_at, False),
             ],
         )
 

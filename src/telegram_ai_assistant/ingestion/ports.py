@@ -30,6 +30,17 @@ class IngestionClient(Protocol):
     ) -> AsyncIterator[object]:
         pass
 
+    async def iter_backfill_messages(
+        self,
+        chat_id: int,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        before_message_id: int | None = None,
+        limit: int | None = None,
+    ) -> AsyncIterator[object]:
+        pass
+
     async def get_latest_message_id(self, chat_id: int) -> int:
         pass
 
@@ -70,6 +81,29 @@ class ReadOnlyIngestionClient:
         method = self._allowed_method("iter_messages")
         stream = method(chat_id, limit=limit, offset_date=since, reverse=True)
         async for message in await _resolve_async_iterable(stream):
+            yield message
+
+    async def iter_backfill_messages(
+        self,
+        chat_id: int,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        before_message_id: int | None = None,
+        limit: int | None = None,
+    ) -> AsyncIterator[object]:
+        method = self._allowed_method("iter_messages")
+        stream = method(
+            chat_id,
+            limit=limit,
+            max_id=before_message_id,
+            offset_date=end_at,
+            reverse=False,
+        )
+        async for message in await _resolve_async_iterable(stream):
+            message_date = getattr(message, "date", None)
+            if isinstance(message_date, datetime) and message_date < start_at:
+                break
             yield message
 
     async def get_latest_message_id(self, chat_id: int) -> int:
