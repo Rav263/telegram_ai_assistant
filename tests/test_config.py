@@ -44,12 +44,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.worker_status_auto_apply_threshold, 0.8)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
+        self.assertEqual(settings.lm_studio_model, "local-model")
         self.assertEqual(settings.backfill_days, 30)
 
     def test_loads_optional_lm_studio_backfill_and_ingest_limit_values(self):
         env = {
             **VALID_ENV,
             "LM_STUDIO_BASE_URL": "http://lmstudio.local:1234/v1",
+            "LM_STUDIO_MODEL": "qwen2.5-7b-instruct",
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
@@ -71,6 +73,7 @@ class SettingsTests(unittest.TestCase):
         settings = Settings.from_env(env)
 
         self.assertEqual(settings.lm_studio_base_url, "http://lmstudio.local:1234/v1")
+        self.assertEqual(settings.lm_studio_model, "qwen2.5-7b-instruct")
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
         self.assertTrue(settings.telegram_ingest_debug_messages)

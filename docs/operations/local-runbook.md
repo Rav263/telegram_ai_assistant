@@ -42,6 +42,7 @@ TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS=
 TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
+LM_STUDIO_MODEL=local-model
 BACKFILL_DAYS=30
 TELEGRAM_DATA_DIR=${HOME}/.telegram/telegram_ai_assistant
 WORKER_BATCH_SIZE=25
@@ -135,6 +136,8 @@ Worker tuning variables:
 LLM failures and worker errors are recorded as sanitized runtime events. Ask the owner-only bot for `/logs` to see the latest warning/error runtime events without Telegram message text, raw prompts, bot tokens, API hashes, database URLs, or raw tracebacks.
 
 For LM Studio connection failures, `/logs` may include safe technical fields such as `endpoint_scheme`, `endpoint_host`, `endpoint_path`, `http_status`, and `transport_error_type`. If Docker on macOS reports `endpoint_host=127.0.0.1`, set `LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1` in `.env` so the container reaches LM Studio on the host.
+
+LM Studio must have a chat model loaded before the worker can extract items. Load a model in the LM Studio Developer page or with `lms load <model>`, then set `LM_STUDIO_MODEL` to the exact model id accepted by LM Studio. If `/logs` shows `http_status=400` for `/v1/chat/completions`, first verify that a model is loaded and that `LM_STUDIO_MODEL` matches it.
 
 ## Bot
 

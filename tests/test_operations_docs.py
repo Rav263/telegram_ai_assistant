@@ -45,6 +45,8 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("telegram-ai-assistant run worker --once", text)
         self.assertIn("telegram-ai-assistant run worker", text)
         self.assertIn("telegram-ai-assistant run bot", text)
+        self.assertIn("LM_STUDIO_MODEL", text)
+        self.assertIn("lms load", text)
         self.assertIn("/logs", text)
         self.assertIn("/tasks", text)
         self.assertIn("bot_runtime_state", text)

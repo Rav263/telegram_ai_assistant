@@ -31,3 +31,4 @@
 - Changed Docker Postgres storage to a host bind mount under `~/.telegram/telegram_ai_assistant/postgres`.
 - Added safe LM Studio failure diagnostics, production long-polling bot runtime, bot `/health`, and Docker `app-bot`.
 - Added persistent bot update offsets, Telegram Bot API retry backoff, long-message splitting, and real `/tasks` status actions.
+- Added configurable LM Studio chat completion model through `LM_STUDIO_MODEL`.

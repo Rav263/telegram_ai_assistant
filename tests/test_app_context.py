@@ -242,6 +242,14 @@ class AppContextTests(unittest.TestCase):
         client = default_lm_studio_client_factory(make_settings())
 
         self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
+        self.assertEqual(client.model, "local-model")
+
+    def test_default_lm_studio_client_factory_uses_configured_model(self):
+        settings = replace(make_settings(), lm_studio_model="qwen2.5-7b-instruct")
+
+        client = default_lm_studio_client_factory(settings)
+
+        self.assertEqual(client.model, "qwen2.5-7b-instruct")
 
 
 def make_settings() -> Settings:
