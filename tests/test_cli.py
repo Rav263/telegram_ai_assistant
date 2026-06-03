@@ -39,6 +39,19 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(args.command, "run")
         self.assertEqual(args.process, "worker")
+        self.assertFalse(args.once)
+
+    def test_parses_run_worker_once_command(self):
+        args = build_parser().parse_args(["run", "worker", "--once"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.process, "worker")
+        self.assertTrue(args.once)
+
+    def test_rejects_once_for_non_worker_processes(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit):
+            build_parser().parse_args(["run", "listener", "--once"])
 
     def test_parses_run_backfill_command(self):
         args = build_parser().parse_args(["run", "backfill"])
@@ -104,6 +117,22 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(calls, ["DEBUG"])
+
+    def test_run_worker_once_passes_once_flag_to_runner(self):
+        calls = []
+
+        def runner(settings, *, once=False):
+            calls.append(once)
+            return 0
+
+        exit_code = main(
+            ["run", "worker", "--once"],
+            environ=VALID_ENV,
+            runners={"worker": runner},
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, [True])
 
     def test_logs_go_to_stderr_without_replacing_stdout_payloads(self):
         def runner(settings):

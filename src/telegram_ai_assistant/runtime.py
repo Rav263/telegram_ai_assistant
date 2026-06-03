@@ -15,7 +15,7 @@ from .ingestion.live import IngestionRunResult
 
 
 PROCESS_NAMES = ("ingestor", "backfill", "listener", "worker", "bot", "scheduler", "all")
-Runner = Callable[[Settings], int]
+Runner = Callable[..., int]
 logger = logging.getLogger(__name__)
 
 
@@ -24,11 +24,12 @@ def run_process(
     settings: Settings,
     *,
     runners: Mapping[str, Runner] | None = None,
+    **runner_kwargs: Any,
 ) -> int:
     if process_name not in PROCESS_NAMES:
         raise ValueError(f"unknown process: {process_name}")
     process_runners = dict(DEFAULT_RUNNERS if runners is None else runners)
-    return process_runners[process_name](settings)
+    return process_runners[process_name](settings, **runner_kwargs)
 
 
 def run_ingestor(settings: Settings, *, context_factory=AppContext.from_settings) -> int:
@@ -86,7 +87,7 @@ def run_listener(settings: Settings, *, context_factory=AppContext.from_settings
     return 0
 
 
-def run_worker(settings: Settings) -> int:
+def run_worker(settings: Settings, *, once: bool = False) -> int:
     return 0
 
 

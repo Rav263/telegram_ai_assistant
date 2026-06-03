@@ -38,6 +38,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_allowed_channel_ids, frozenset())
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset())
         self.assertEqual(settings.log_level, "INFO")
+        self.assertEqual(settings.worker_batch_size, 25)
+        self.assertEqual(settings.worker_poll_interval_seconds, 10)
+        self.assertEqual(settings.worker_item_auto_apply_threshold, 0.8)
+        self.assertEqual(settings.worker_status_auto_apply_threshold, 0.8)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.backfill_days, 30)
@@ -58,6 +62,10 @@ class SettingsTests(unittest.TestCase):
             "TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS": "-100111,-100222",
             "TELEGRAM_LISTENER_DENIED_CHAT_IDS": "123, 456",
             "LOG_LEVEL": "debug",
+            "WORKER_BATCH_SIZE": "50",
+            "WORKER_POLL_INTERVAL_SECONDS": "3",
+            "WORKER_ITEM_AUTO_APPLY_THRESHOLD": "0.9",
+            "WORKER_STATUS_AUTO_APPLY_THRESHOLD": "0.7",
         }
 
         settings = Settings.from_env(env)
@@ -81,6 +89,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_allowed_channel_ids, frozenset({-100111, -100222}))
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset({123, 456}))
         self.assertEqual(settings.log_level, "DEBUG")
+        self.assertEqual(settings.worker_batch_size, 50)
+        self.assertEqual(settings.worker_poll_interval_seconds, 3)
+        self.assertEqual(settings.worker_item_auto_apply_threshold, 0.9)
+        self.assertEqual(settings.worker_status_auto_apply_threshold, 0.7)
 
     def test_raises_when_required_setting_is_missing(self):
         env = dict(VALID_ENV)
@@ -197,6 +209,42 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "LOG_LEVEL": "verbose",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_worker_batch_size_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "WORKER_BATCH_SIZE": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_worker_poll_interval_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "WORKER_POLL_INTERVAL_SECONDS": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_worker_threshold_is_not_a_float(self):
+        env = {
+            **VALID_ENV,
+            "WORKER_ITEM_AUTO_APPLY_THRESHOLD": "high",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_worker_threshold_is_out_of_range(self):
+        env = {
+            **VALID_ENV,
+            "WORKER_STATUS_AUTO_APPLY_THRESHOLD": "1.1",
         }
 
         with self.assertRaises(ConfigError):

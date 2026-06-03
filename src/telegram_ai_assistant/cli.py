@@ -26,7 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("version")
 
     run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("process", choices=PROCESS_NAMES)
+    run_subparsers = run_parser.add_subparsers(dest="process", required=True)
+    for process_name in PROCESS_NAMES:
+        process_parser = run_subparsers.add_parser(process_name)
+        process_parser.set_defaults(once=False)
+        if process_name == "worker":
+            process_parser.add_argument("--once", action="store_true")
 
     health_parser = subparsers.add_parser("health")
     health_parser.add_argument("--offline", action="store_true")
@@ -53,6 +58,8 @@ def main(
         environment = _load_environment(args.log_level, env_file, environ)
         settings = Settings.from_env(environment)
         configure_logging(settings.log_level)
+        if args.process == "worker":
+            return run_process(args.process, settings, runners=runners, once=args.once)
         return run_process(args.process, settings, runners=runners)
     if args.command == "health":
         if args.offline:

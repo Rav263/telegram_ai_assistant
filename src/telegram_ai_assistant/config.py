@@ -36,6 +36,10 @@ class Settings:
     telegram_listener_allowed_channel_ids: frozenset[int] = frozenset()
     telegram_listener_denied_chat_ids: frozenset[int] = frozenset()
     log_level: str = "INFO"
+    worker_batch_size: int = 25
+    worker_poll_interval_seconds: int = 10
+    worker_item_auto_apply_threshold: float = 0.8
+    worker_status_auto_apply_threshold: float = 0.8
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -95,6 +99,26 @@ class Settings:
                 "TELEGRAM_LISTENER_DENIED_CHAT_IDS",
             ),
             log_level=_optional_log_level(env, "LOG_LEVEL", cls.log_level),
+            worker_batch_size=_optional_positive_int(
+                env,
+                "WORKER_BATCH_SIZE",
+                cls.worker_batch_size,
+            ),
+            worker_poll_interval_seconds=_optional_positive_int(
+                env,
+                "WORKER_POLL_INTERVAL_SECONDS",
+                cls.worker_poll_interval_seconds,
+            ),
+            worker_item_auto_apply_threshold=_optional_probability_float(
+                env,
+                "WORKER_ITEM_AUTO_APPLY_THRESHOLD",
+                cls.worker_item_auto_apply_threshold,
+            ),
+            worker_status_auto_apply_threshold=_optional_probability_float(
+                env,
+                "WORKER_STATUS_AUTO_APPLY_THRESHOLD",
+                cls.worker_status_auto_apply_threshold,
+            ),
         )
 
 
@@ -196,3 +220,16 @@ def _optional_log_level(env: Mapping[str, str], name: str, default: str) -> str:
         allowed = ", ".join(sorted(LOG_LEVELS))
         raise ConfigError(f"setting must be one of {allowed}: {name}")
     return normalized
+
+
+def _optional_probability_float(env: Mapping[str, str], name: str, default: float) -> float:
+    value = env.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ConfigError(f"setting must be a float between 0 and 1: {name}") from exc
+    if parsed < 0.0 or parsed > 1.0:
+        raise ConfigError(f"setting must be a float between 0 and 1: {name}")
+    return parsed
