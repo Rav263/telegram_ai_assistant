@@ -21,12 +21,14 @@ class DBSchemaTests(unittest.TestCase):
             "accounts",
             "chats",
             "messages",
+            "message_processing_state",
             "raw_updates",
             "message_candidates",
             "extracted_items",
             "item_status_events",
             "review_queue",
             "llm_runs",
+            "runtime_events",
             "backfill_jobs",
             "bot_actions",
             "settings",
@@ -88,6 +90,78 @@ class DBSchemaTests(unittest.TestCase):
         )
         self.assertIn(
             "alter table chats add column if not exists ingestion_error text not null default ''",
+            schema,
+        )
+
+    def test_message_processing_state_tracks_candidate_filter_stage(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists message_processing_state", schema)
+        self.assertIn(
+            "primary key (account_id, chat_id, telegram_message_id, stage)",
+            schema,
+        )
+        self.assertIn(
+            "references messages(account_id, chat_id, telegram_message_id)",
+            schema,
+        )
+        self.assertRegex(schema, r"stage\s+text\s+not\s+null")
+        self.assertRegex(schema, r"status\s+text\s+not\s+null")
+        self.assertRegex(schema, r"error\s+text\s+not\s+null\s+default\s+''")
+
+    def test_review_queue_supports_item_and_status_change_reviews(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertRegex(
+            schema,
+            r"item_id\s+text\s+references\s+extracted_items\(item_id\)",
+        )
+        self.assertIn(
+            "review_type text not null default 'item'",
+            schema,
+        )
+        self.assertIn(
+            "payload jsonb not null default '{}'::jsonb",
+            schema,
+        )
+        self.assertIn(
+            "alter table review_queue add column if not exists review_type text not null default 'item'",
+            schema,
+        )
+        self.assertIn(
+            "alter table review_queue add column if not exists payload jsonb not null default '{}'::jsonb",
+            schema,
+        )
+        self.assertIn(
+            "alter table review_queue alter column item_id drop not null",
+            schema,
+        )
+
+    def test_runtime_events_support_bot_log_lookup(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists runtime_events", schema)
+        self.assertRegex(schema, r"component\s+text\s+not\s+null")
+        self.assertRegex(schema, r"severity\s+text\s+not\s+null")
+        self.assertRegex(schema, r"event_type\s+text\s+not\s+null")
+        self.assertIn("metadata jsonb not null default '{}'::jsonb", schema)
+        self.assertIn(
+            "create index if not exists idx_runtime_events_severity_created_at on runtime_events(severity, created_at desc, runtime_event_id desc)",
             schema,
         )
 
