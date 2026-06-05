@@ -30,6 +30,9 @@ TELEGRAM_ALLOWED_USER_ID=123456
 TELEGRAM_SESSION_PATH=.local/telegram-owner.session
 TELEGRAM_INGEST_ACCOUNT_ID=owner
 TELEGRAM_INGEST_CHAT_ID=123456789
+TELEGRAM_MTPROXY_HOST=
+TELEGRAM_MTPROXY_PORT=
+TELEGRAM_MTPROXY_SECRET=
 TELEGRAM_INGEST_LIMIT=100
 TELEGRAM_INGEST_DEBUG_MESSAGES=false
 TELEGRAM_INGEST_BOOTSTRAP_MODE=recent
@@ -247,6 +250,20 @@ docker compose run --rm app-listener telegram-ai-assistant health
 ```
 
 On macOS, use `LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1` when LM Studio runs on the host. On Linux, set `LM_STUDIO_BASE_URL` to a host address reachable from the container.
+
+If Telegram direct connections time out, configure an MTProxy endpoint in `.env`:
+
+```bash
+TELEGRAM_MTPROXY_HOST=proxy.example.com
+TELEGRAM_MTPROXY_PORT=443
+TELEGRAM_MTPROXY_SECRET=dd00000000000000000000000000000000
+```
+
+All three `TELEGRAM_MTPROXY_*` values must be set together. Restart `app-listener` after changing them:
+
+```bash
+docker compose up -d --force-recreate app-listener
+```
 
 ## Tests
 

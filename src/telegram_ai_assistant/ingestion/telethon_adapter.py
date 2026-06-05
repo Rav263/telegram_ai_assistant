@@ -48,6 +48,23 @@ def _load_telegram_client() -> type[Any]:
     return TelegramClient
 
 
+def mtproxy_client_kwargs(*, host: str, port: int, secret: str) -> dict[str, object]:
+    if not host:
+        return {}
+    return {
+        "connection": _load_mtproxy_connection(),
+        "proxy": (host, port, secret),
+    }
+
+
+def _load_mtproxy_connection() -> type[Any]:
+    try:
+        from telethon.network.connection import ConnectionTcpMTProxyRandomizedIntermediate
+    except ImportError as exc:
+        raise TelethonAdapterError("Telethon MTProxy support is required to use TELEGRAM_MTPROXY_*") from exc
+    return ConnectionTcpMTProxyRandomizedIntermediate
+
+
 def _load_new_message_event() -> type[Any]:
     try:
         from telethon import events

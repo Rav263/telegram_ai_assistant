@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import unittest
 
 from telegram_ai_assistant.ingestion.ports import ReadOnlyIngestionClient
-from telegram_ai_assistant.ingestion.telethon_adapter import TelethonIngestionAdapter
+from telegram_ai_assistant.ingestion.telethon_adapter import TelethonIngestionAdapter, mtproxy_client_kwargs
 from telegram_ai_assistant.telegram_readonly import MutatingTelegramMethodError, ReadOnlyTelegramGuard
 
 
@@ -220,12 +220,43 @@ class ReadOnlyIngestionClientTests(unittest.TestCase):
 
 
 class TelethonIngestionAdapterTests(unittest.TestCase):
+    def test_mtproxy_client_kwargs_builds_telethon_proxy_configuration(self):
+        from telegram_ai_assistant.ingestion import telethon_adapter
+
+        original_loader = telethon_adapter._load_mtproxy_connection
+
+        class FakeMTProxyConnection:
+            pass
+
+        telethon_adapter._load_mtproxy_connection = lambda: FakeMTProxyConnection
+        try:
+            kwargs = mtproxy_client_kwargs(
+                host="proxy.local",
+                port=443,
+                secret="ddsecret",
+            )
+        finally:
+            telethon_adapter._load_mtproxy_connection = original_loader
+
+        self.assertEqual(
+            kwargs,
+            {
+                "connection": FakeMTProxyConnection,
+                "proxy": ("proxy.local", 443, "ddsecret"),
+            },
+        )
+
+    def test_mtproxy_client_kwargs_is_empty_without_host(self):
+        self.assertEqual(mtproxy_client_kwargs(host="", port=0, secret=""), {})
+
     def test_connects_lazy_loaded_client_behind_read_only_guard(self):
         from telegram_ai_assistant.ingestion import telethon_adapter
 
         original_loader = telethon_adapter._load_telegram_client
+        original_event_loader = telethon_adapter._load_new_message_event
         FakeTelethonClient.instances = []
         telethon_adapter._load_telegram_client = lambda: FakeTelethonClient
+        telethon_adapter._load_new_message_event = lambda: FakeNewMessageEvent
         try:
             adapter = asyncio.run(
                 TelethonIngestionAdapter.connect(
@@ -237,6 +268,7 @@ class TelethonIngestionAdapterTests(unittest.TestCase):
             )
         finally:
             telethon_adapter._load_telegram_client = original_loader
+            telethon_adapter._load_new_message_event = original_event_loader
 
         fake_client = FakeTelethonClient.instances[0]
         self.assertIsInstance(adapter, TelethonIngestionAdapter)

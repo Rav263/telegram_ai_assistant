@@ -27,7 +27,7 @@ from .ingestion.backfill import BackfillService
 from .ingestion.chat_policy import ChatIngestionPolicy
 from .ingestion.listener import LiveUpdateListener
 from .ingestion.live import LiveIngestor
-from .ingestion.telethon_adapter import TelethonIngestionAdapter
+from .ingestion.telethon_adapter import TelethonIngestionAdapter, mtproxy_client_kwargs
 from .llm_client import LMStudioClient
 from .security import BotAccessController
 from .worker import Worker, WorkerResult
@@ -41,6 +41,11 @@ def default_telegram_client_factory(settings: Settings):
         settings.telegram_session_path,
         settings.telegram_api_id,
         settings.telegram_api_hash,
+        **mtproxy_client_kwargs(
+            host=settings.telegram_mtproxy_host,
+            port=settings.telegram_mtproxy_port,
+            secret=settings.telegram_mtproxy_secret,
+        ),
     )
 
 

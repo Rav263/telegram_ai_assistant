@@ -23,6 +23,9 @@ class Settings:
     telegram_session_path: str = ""
     telegram_ingest_account_id: str = ""
     telegram_ingest_chat_id: int = 0
+    telegram_mtproxy_host: str = ""
+    telegram_mtproxy_port: int = 0
+    telegram_mtproxy_secret: str = ""
     lm_studio_base_url: str = "http://127.0.0.1:1234/v1"
     lm_studio_model: str = "local-model"
     lm_studio_max_tokens: int = 8192
@@ -47,12 +50,25 @@ class Settings:
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
         telegram_backfill_start_at = _optional_datetime(env, "TELEGRAM_BACKFILL_START_AT")
         telegram_backfill_end_at = _optional_datetime(env, "TELEGRAM_BACKFILL_END_AT")
+        telegram_mtproxy_host = _optional_str(env, "TELEGRAM_MTPROXY_HOST", cls.telegram_mtproxy_host)
+        telegram_mtproxy_port = _optional_int(env, "TELEGRAM_MTPROXY_PORT", cls.telegram_mtproxy_port)
+        telegram_mtproxy_secret = _optional_str(
+            env,
+            "TELEGRAM_MTPROXY_SECRET",
+            cls.telegram_mtproxy_secret,
+        )
         if (
             telegram_backfill_start_at is not None
             and telegram_backfill_end_at is not None
             and telegram_backfill_end_at <= telegram_backfill_start_at
         ):
             raise ConfigError("TELEGRAM_BACKFILL_END_AT must be after TELEGRAM_BACKFILL_START_AT")
+        if any((telegram_mtproxy_host, telegram_mtproxy_port, telegram_mtproxy_secret)):
+            if not telegram_mtproxy_host or telegram_mtproxy_port <= 0 or not telegram_mtproxy_secret:
+                raise ConfigError(
+                    "TELEGRAM_MTPROXY_HOST, TELEGRAM_MTPROXY_PORT, "
+                    "and TELEGRAM_MTPROXY_SECRET must be set together"
+                )
 
         return cls(
             telegram_api_id=_required_int(env, "TELEGRAM_API_ID"),
@@ -62,6 +78,9 @@ class Settings:
             telegram_session_path=_required(env, "TELEGRAM_SESSION_PATH"),
             telegram_ingest_account_id=_required(env, "TELEGRAM_INGEST_ACCOUNT_ID"),
             telegram_ingest_chat_id=_required_int(env, "TELEGRAM_INGEST_CHAT_ID"),
+            telegram_mtproxy_host=telegram_mtproxy_host,
+            telegram_mtproxy_port=telegram_mtproxy_port,
+            telegram_mtproxy_secret=telegram_mtproxy_secret,
             database_url=_required(env, "DATABASE_URL"),
             lm_studio_base_url=env.get("LM_STUDIO_BASE_URL", cls.lm_studio_base_url),
             lm_studio_model=_optional_str(env, "LM_STUDIO_MODEL", cls.lm_studio_model),

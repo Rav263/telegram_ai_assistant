@@ -3,7 +3,11 @@ from dataclasses import replace
 from datetime import UTC, datetime
 import unittest
 
-from telegram_ai_assistant.app_context import AppContext, default_lm_studio_client_factory
+from telegram_ai_assistant.app_context import (
+    AppContext,
+    default_lm_studio_client_factory,
+    default_telegram_client_factory,
+)
 from telegram_ai_assistant.config import ConfigError, Settings
 from telegram_ai_assistant.worker import WorkerResult
 
@@ -263,6 +267,53 @@ class AppContextTests(unittest.TestCase):
 
         self.assertEqual(client.model, "qwen2.5-7b-instruct")
         self.assertEqual(client.max_tokens, 16384)
+
+    def test_default_telegram_client_factory_passes_mtproxy_settings(self):
+        from telegram_ai_assistant import app_context
+
+        captured = {}
+        original_adapter = app_context.TelethonIngestionAdapter
+        original_mtproxy_client_kwargs = app_context.mtproxy_client_kwargs
+
+        class FakeTelethonIngestionAdapter:
+            @staticmethod
+            def connect(session, api_id, api_hash, **kwargs):
+                captured.update(
+                    {
+                        "session": session,
+                        "api_id": api_id,
+                        "api_hash": api_hash,
+                        "kwargs": kwargs,
+                    }
+                )
+                return "telegram-client"
+
+        def fake_mtproxy_client_kwargs(*, host, port, secret):
+            captured["mtproxy_settings"] = (host, port, secret)
+            return {"proxy": "mtproxy"}
+
+        app_context.TelethonIngestionAdapter = FakeTelethonIngestionAdapter
+        app_context.mtproxy_client_kwargs = fake_mtproxy_client_kwargs
+        try:
+            factory = default_telegram_client_factory(
+                replace(
+                    make_settings(),
+                    telegram_mtproxy_host="proxy.local",
+                    telegram_mtproxy_port=443,
+                    telegram_mtproxy_secret="ddsecret",
+                )
+            )
+            result = factory()
+        finally:
+            app_context.TelethonIngestionAdapter = original_adapter
+            app_context.mtproxy_client_kwargs = original_mtproxy_client_kwargs
+
+        self.assertEqual(result, "telegram-client")
+        self.assertEqual(captured["session"], ".local/telegram-owner.session")
+        self.assertEqual(captured["api_id"], 123)
+        self.assertEqual(captured["api_hash"], "hash")
+        self.assertEqual(captured["mtproxy_settings"], ("proxy.local", 443, "ddsecret"))
+        self.assertEqual(captured["kwargs"], {"proxy": "mtproxy"})
 
 
 def make_settings() -> Settings:

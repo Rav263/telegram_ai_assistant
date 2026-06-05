@@ -31,6 +31,9 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(settings.telegram_ingest_debug_messages)
         self.assertEqual(settings.telegram_ingest_bootstrap_mode, "recent")
         self.assertEqual(settings.telegram_ingest_bootstrap_days, 30)
+        self.assertEqual(settings.telegram_mtproxy_host, "")
+        self.assertEqual(settings.telegram_mtproxy_port, 0)
+        self.assertEqual(settings.telegram_mtproxy_secret, "")
         self.assertEqual(settings.telegram_backfill_chat_id, 0)
         self.assertIsNone(settings.telegram_backfill_start_at)
         self.assertIsNone(settings.telegram_backfill_end_at)
@@ -59,6 +62,9 @@ class SettingsTests(unittest.TestCase):
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
             "TELEGRAM_INGEST_BOOTSTRAP_MODE": "start_now",
             "TELEGRAM_INGEST_BOOTSTRAP_DAYS": "7",
+            "TELEGRAM_MTPROXY_HOST": "proxy.local",
+            "TELEGRAM_MTPROXY_PORT": "443",
+            "TELEGRAM_MTPROXY_SECRET": "ddsecret",
             "TELEGRAM_BACKFILL_CHAT_ID": "380453832",
             "TELEGRAM_BACKFILL_START_AT": "2022-01-01T00:00:00+00:00",
             "TELEGRAM_BACKFILL_END_AT": "2022-02-01T00:00:00+00:00",
@@ -82,6 +88,9 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(settings.telegram_ingest_debug_messages)
         self.assertEqual(settings.telegram_ingest_bootstrap_mode, "start_now")
         self.assertEqual(settings.telegram_ingest_bootstrap_days, 7)
+        self.assertEqual(settings.telegram_mtproxy_host, "proxy.local")
+        self.assertEqual(settings.telegram_mtproxy_port, 443)
+        self.assertEqual(settings.telegram_mtproxy_secret, "ddsecret")
         self.assertEqual(settings.telegram_backfill_chat_id, 380453832)
         self.assertEqual(
             settings.telegram_backfill_start_at,
@@ -224,6 +233,27 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "WORKER_BATCH_SIZE": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_mtproxy_config_is_partial(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_MTPROXY_HOST": "proxy.local",
+            "TELEGRAM_MTPROXY_SECRET": "ddsecret",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_mtproxy_port_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "TELEGRAM_MTPROXY_HOST": "proxy.local",
+            "TELEGRAM_MTPROXY_PORT": "0",
+            "TELEGRAM_MTPROXY_SECRET": "ddsecret",
         }
 
         with self.assertRaises(ConfigError):
