@@ -7,6 +7,7 @@ from telegram_ai_assistant.db.migrations import apply_schema
 from telegram_ai_assistant.db.repositories import (
     BackfillJobRepository,
     BackfillJobQueryRepository,
+    BotSessionRepository,
     CandidateRepository,
     ChatPolicyRepository,
     ChatQueryRepository,
@@ -23,6 +24,7 @@ from telegram_ai_assistant.domain import (
     BackfillChatChoice,
     BackfillJobRecord,
     BackfillJobSummary,
+    BotSession,
     ChatPolicyChoice,
     ExtractedItem,
     ItemStatus,
@@ -1127,6 +1129,120 @@ class RuntimeEventRepositoryTests(unittest.TestCase):
                 )
             ],
         )
+
+
+class BotSessionRepositoryTests(unittest.TestCase):
+    def test_save_session_upserts_payload_and_expiry(self):
+        connection = RecordingConnection()
+        expires_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+
+        BotSessionRepository(connection).save_session(
+            telegram_user_id=456,
+            bot_chat_id=123,
+            flow_id="item_edit",
+            payload={"item_id": "task-1", "field": "title"},
+            expires_at=expires_at,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("insert into bot_sessions", normalized_sql)
+        self.assertIn("on conflict (telegram_user_id, bot_chat_id, flow_id)", normalized_sql)
+        self.assertEqual(params["telegram_user_id"], 456)
+        self.assertEqual(params["bot_chat_id"], 123)
+        self.assertEqual(params["flow_id"], "item_edit")
+        self.assertEqual(json.loads(params["payload"]), {"item_id": "task-1", "field": "title"})
+        self.assertEqual(params["expires_at"], expires_at)
+
+    def test_get_active_session_returns_unexpired_session(self):
+        connection = RecordingConnection()
+        now = datetime(2026, 6, 6, 11, 0, tzinfo=UTC)
+        expires_at = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchone_result = {
+            "telegram_user_id": 456,
+            "bot_chat_id": 123,
+            "flow_id": "item_edit",
+            "payload": {"item_id": "task-1"},
+            "expires_at": expires_at,
+        }
+
+        session = BotSessionRepository(connection).get_active_session(
+            telegram_user_id=456,
+            bot_chat_id=123,
+            now=now,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from bot_sessions", normalized_sql)
+        self.assertIn("expires_at > %(now)s", normalized_sql)
+        self.assertEqual(params["telegram_user_id"], 456)
+        self.assertEqual(params["bot_chat_id"], 123)
+        self.assertEqual(params["now"], now)
+        self.assertEqual(
+            session,
+            BotSession(
+                telegram_user_id=456,
+                bot_chat_id=123,
+                flow_id="item_edit",
+                payload={"item_id": "task-1"},
+                expires_at=expires_at,
+            ),
+        )
+
+    def test_get_active_session_returns_none_for_missing_session(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = None
+
+        session = BotSessionRepository(connection).get_active_session(
+            telegram_user_id=456,
+            bot_chat_id=123,
+            now=datetime(2026, 6, 6, 11, 0, tzinfo=UTC),
+        )
+
+        self.assertIsNone(session)
+
+    def test_clear_session_deletes_one_flow(self):
+        connection = RecordingConnection()
+
+        BotSessionRepository(connection).clear_session(
+            telegram_user_id=456,
+            bot_chat_id=123,
+            flow_id="item_edit",
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("delete from bot_sessions", normalized_sql)
+        self.assertIn("flow_id = %(flow_id)s", normalized_sql)
+        self.assertEqual(params["flow_id"], "item_edit")
+
+    def test_clear_user_sessions_deletes_all_user_chat_flows(self):
+        connection = RecordingConnection()
+
+        BotSessionRepository(connection).clear_user_sessions(
+            telegram_user_id=456,
+            bot_chat_id=123,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("delete from bot_sessions", normalized_sql)
+        self.assertNotIn("flow_id =", normalized_sql)
+        self.assertEqual(params["telegram_user_id"], 456)
+        self.assertEqual(params["bot_chat_id"], 123)
+
+    def test_clear_expired_sessions_deletes_old_rows(self):
+        connection = RecordingConnection()
+        now = datetime(2026, 6, 6, 11, 0, tzinfo=UTC)
+
+        BotSessionRepository(connection).clear_expired_sessions(now=now)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("delete from bot_sessions", normalized_sql)
+        self.assertIn("expires_at <= %(now)s", normalized_sql)
+        self.assertEqual(params["now"], now)
 
 
 class BotRuntimeStateRepositoryTests(unittest.TestCase):

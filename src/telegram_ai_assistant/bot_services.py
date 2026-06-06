@@ -70,6 +70,7 @@ class BotServices:
         review_repository: Any | None = None,
         chat_query_repository: Any | None = None,
         chat_policy_repository: Any | None = None,
+        bot_session_repository: Any | None = None,
         backfill_job_query_repository: Any | None = None,
         backfill_job_repository: Any | None = None,
         settings_snapshot: Any | None = None,
@@ -83,6 +84,7 @@ class BotServices:
         self.review_repository = review_repository
         self.chat_query_repository = chat_query_repository
         self.chat_policy_repository = chat_policy_repository
+        self.bot_session_repository = bot_session_repository
         self.backfill_job_query_repository = backfill_job_query_repository
         self.backfill_job_repository = backfill_job_repository
         self.settings_snapshot = settings_snapshot
@@ -110,6 +112,12 @@ class BotServices:
             reply_markup=_main_menu_markup(),
         )
 
+    def assistant_menu(self) -> BotResponse:
+        return BotResponse(_format_assistant_menu(), _assistant_menu_markup())
+
+    def ops_menu(self) -> BotResponse:
+        return BotResponse(_format_ops_menu(), _ops_menu_markup())
+
     def summary(self) -> BotResponse:
         if self.summary_query_repository is None:
             return BotResponse("Summary service is not configured.", _summary_markup())
@@ -120,10 +128,10 @@ class BotServices:
 
     def tasks(self) -> BotResponse:
         if self.item_query_repository is None:
-            return BotResponse("Task service is not configured.")
+            return BotResponse("Task service is not configured.", _main_menu_markup())
         items = self.item_query_repository.list_open_tasks(limit=10)
         if not items:
-            return BotResponse("No open tasks.")
+            return BotResponse("No open tasks.", _main_menu_markup())
         return BotResponse(
             text=_format_tasks(items),
             reply_markup=_tasks_reply_markup(items),
@@ -180,6 +188,39 @@ class BotServices:
             }
         )
         return f"Status updated: {status.value}"
+
+    def has_active_session(self, *, user_id: int, chat_id: int) -> bool:
+        if self.bot_session_repository is None:
+            return False
+        session = self.bot_session_repository.get_active_session(
+            telegram_user_id=user_id,
+            bot_chat_id=chat_id,
+            now=self.clock(),
+        )
+        return session is not None
+
+    def cancel_session(self, *, user_id: int, chat_id: int) -> BotResponse:
+        if self.bot_session_repository is not None:
+            self.bot_session_repository.clear_user_sessions(
+                telegram_user_id=user_id,
+                bot_chat_id=chat_id,
+            )
+        return BotResponse("Active bot flow cancelled.", _main_menu_markup())
+
+    def handle_session_message(self, *, user_id: int, chat_id: int, text: str) -> BotResponse:
+        if self.bot_session_repository is None:
+            return BotResponse("No active bot flow.", _main_menu_markup())
+        session = self.bot_session_repository.get_active_session(
+            telegram_user_id=user_id,
+            bot_chat_id=chat_id,
+            now=self.clock(),
+        )
+        if session is None:
+            return BotResponse("No active bot flow.", _main_menu_markup())
+        return BotResponse(
+            "Active edit flow is not implemented in this release. Use /cancel to clear it.",
+            _main_menu_markup(),
+        )
 
     def handle_policy_callback(self, action: str, target_id: str) -> BotResponse | str:
         if action == "p":
@@ -358,6 +399,7 @@ def _format_help() -> str:
     return "\n".join(
         [
             "Commands:",
+            "/cancel - clear active bot flow",
             "/summary - daily structured summary",
             "/tasks - open tasks and commitments",
             "/review - pending low-confidence items",
@@ -370,9 +412,65 @@ def _format_help() -> str:
     )
 
 
+def _format_assistant_menu() -> str:
+    return "\n".join(
+        [
+            "Assistant:",
+            "/summary - daily structured summary",
+            "/tasks - open tasks and commitments",
+            "/review - pending low-confidence items",
+            "/backfill - safe history import controls",
+        ]
+    )
+
+
+def _format_ops_menu() -> str:
+    return "\n".join(
+        [
+            "Ops:",
+            "/health - component health",
+            "/logs - latest safe warning/error events",
+            "/backfill - safe history import controls",
+            "/blacklist - listener allow/deny policy",
+        ]
+    )
+
+
 def _main_menu_markup() -> dict[str, object]:
     return {
         "inline_keyboard": [
+            [
+                {"text": "Assistant", "callback_data": "menu:assistant:0"},
+                {"text": "Ops", "callback_data": "menu:ops:0"},
+            ],
+            [
+                {"text": "Settings", "callback_data": "menu:settings:0"},
+                {"text": "Help", "callback_data": "menu:help:0"},
+            ],
+        ]
+    }
+
+
+def _shell_navigation_rows() -> list[list[dict[str, str]]]:
+    return [
+        [
+            {"text": "Assistant", "callback_data": "menu:assistant:0"},
+            {"text": "Ops", "callback_data": "menu:ops:0"},
+        ],
+        [
+            {"text": "Settings", "callback_data": "menu:settings:0"},
+            {"text": "Help", "callback_data": "menu:help:0"},
+        ],
+    ]
+
+
+def _with_shell_navigation(rows: list[list[dict[str, str]]]) -> dict[str, object]:
+    return {"inline_keyboard": rows + _shell_navigation_rows()}
+
+
+def _assistant_menu_markup() -> dict[str, object]:
+    return _with_shell_navigation(
+        [
             [
                 {"text": "Summary", "callback_data": "menu:summary:0"},
                 {"text": "Tasks", "callback_data": "menu:tasks:0"},
@@ -381,19 +479,23 @@ def _main_menu_markup() -> dict[str, object]:
                 {"text": "Review", "callback_data": "menu:review:0"},
                 {"text": "Backfill", "callback_data": "menu:backfill:0"},
             ],
+        ]
+    )
+
+
+def _ops_menu_markup() -> dict[str, object]:
+    return _with_shell_navigation(
+        [
             [
                 {"text": "Health", "callback_data": "menu:health:0"},
                 {"text": "Logs", "callback_data": "menu:logs:0"},
             ],
             [
-                {"text": "Settings", "callback_data": "menu:settings:0"},
+                {"text": "Backfill", "callback_data": "menu:backfill:0"},
                 {"text": "Blacklist", "callback_data": "menu:blacklist:0"},
             ],
-            [
-                {"text": "Help", "callback_data": "menu:help:0"},
-            ],
         ]
-    }
+    )
 
 
 def _format_summary(items: list[ExtractedItem]) -> str:
@@ -427,18 +529,17 @@ def _summary_task_items(items: list[ExtractedItem]) -> list[ExtractedItem]:
 
 
 def _summary_markup() -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
                 {"text": "Tasks", "callback_data": "menu:tasks:0"},
                 {"text": "Review", "callback_data": "menu:review:0"},
             ],
             [
                 {"text": "Refresh", "callback_data": "menu:summary:0"},
-                {"text": "Help", "callback_data": "menu:help:0"},
             ],
         ]
-    }
+    )
 
 
 def _format_review_entries(entries: list[ReviewEntry]) -> str:
@@ -475,20 +576,19 @@ def _review_confidence(entry: ReviewEntry) -> str:
 
 
 def _review_reply_markup(entries: list[ReviewEntry]) -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
                 {"text": f"Approve {index}", "callback_data": f"review:approve:{entry.review_id}"},
                 {"text": f"Reject {index}", "callback_data": f"review:reject:{entry.review_id}"},
             ]
             for index, entry in enumerate(entries, start=1)
         ]
-        + [[{"text": "Menu", "callback_data": "menu:help:0"}]]
-    }
+    )
 
 
 def _review_empty_markup() -> dict[str, object]:
-    return {"inline_keyboard": [[{"text": "Menu", "callback_data": "menu:help:0"}]]}
+    return _main_menu_markup()
 
 
 def _format_backfill(jobs: list[BackfillJobSummary]) -> str:
@@ -511,8 +611,8 @@ def _format_backfill(jobs: list[BackfillJobSummary]) -> str:
 
 
 def _backfill_days_markup() -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
                 {"text": "1d", "callback_data": "bf:d:1"},
                 {"text": "5d", "callback_data": "bf:d:5"},
@@ -525,10 +625,9 @@ def _backfill_days_markup() -> dict[str, object]:
             ],
             [
                 {"text": "Refresh", "callback_data": "menu:backfill:0"},
-                {"text": "Help", "callback_data": "menu:help:0"},
             ],
         ]
-    }
+    )
 
 
 def _format_backfill_chat_page(*, days: int, page: int, chats: list[BackfillChatChoice]) -> str:
@@ -555,6 +654,7 @@ def _backfill_chat_page_markup(*, days: int, page: int, chats: list[BackfillChat
         navigation.append({"text": "Previous", "callback_data": f"bf:p:{days}:{page - 1}"})
     navigation.append({"text": "Next", "callback_data": f"bf:p:{days}:{page + 1}"})
     rows.append([{"text": "Periods", "callback_data": "menu:backfill:0"}])
+    rows.extend(_shell_navigation_rows())
     rows.append(navigation)
     return {"inline_keyboard": rows}
 
@@ -578,14 +678,14 @@ def _format_backfill_confirmation(
 
 
 def _backfill_confirmation_markup(*, days: int, chat_id: int) -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
                 {"text": "Start", "callback_data": f"bf:start:{days}:{chat_id}"},
                 {"text": "Cancel", "callback_data": f"bf:d:{days}"},
             ]
         ]
-    }
+    )
 
 
 def _format_backfill_job_created(job: BackfillJobRecord) -> str:
@@ -620,7 +720,7 @@ def _backfill_job_markup(job: BackfillJobRecord) -> dict[str, object]:
     row = [{"text": "Status", "callback_data": f"bf:status:{job.backfill_job_id}"}]
     if job.status in {"pending", "running"}:
         row.append({"text": "Cancel", "callback_data": f"bf:cancel:{job.backfill_job_id}"})
-    return {"inline_keyboard": [row, [{"text": "Backfill", "callback_data": "menu:backfill:0"}]]}
+    return _with_shell_navigation([row, [{"text": "Backfill", "callback_data": "menu:backfill:0"}]])
 
 
 def _chat_display_name(chat: BackfillChatChoice) -> str:
@@ -732,7 +832,7 @@ def _policy_chat_page_markup(*, page: int, chats: list[ChatPolicyChoice]) -> dic
     if page > 0:
         navigation.append({"text": "Previous", "callback_data": f"policy:p:{page - 1}"})
     navigation.append({"text": "Next", "callback_data": f"policy:p:{page + 1}"})
-    rows.append([{"text": "Menu", "callback_data": "menu:help:0"}])
+    rows.extend(_shell_navigation_rows())
     rows.append(navigation)
     return {"inline_keyboard": rows}
 
@@ -764,14 +864,13 @@ def _format_settings(settings: Any) -> str:
 
 
 def _settings_markup() -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
                 {"text": "Health", "callback_data": "menu:health:0"},
-                {"text": "Help", "callback_data": "menu:help:0"},
             ]
         ]
-    }
+    )
 
 
 def _ids_text(values: object) -> str:
@@ -790,17 +889,16 @@ def _format_tasks(items: list[ExtractedItem]) -> str:
 
 
 def _tasks_reply_markup(items: list[ExtractedItem]) -> dict[str, object]:
-    return {
-        "inline_keyboard": [
+    return _with_shell_navigation(
+        [
             [
-                {"text": f"Done {index}", "callback_data": f"status:completed:{item.item_id}"},
+                {"text": f"Done {index}", "callback_data": f"task:completed:{item.item_id}"},
                 {
                     "text": f"Partial {index}",
-                    "callback_data": f"status:partially_completed:{item.item_id}",
+                    "callback_data": f"task:partially_completed:{item.item_id}",
                 },
-                {"text": f"Cancel {index}", "callback_data": f"status:cancelled:{item.item_id}"},
+                {"text": f"Cancel {index}", "callback_data": f"task:cancelled:{item.item_id}"},
             ]
             for index, item in enumerate(items, start=1)
         ]
-        + [[{"text": "Menu", "callback_data": "menu:help:0"}]]
-    }
+    )

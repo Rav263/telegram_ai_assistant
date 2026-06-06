@@ -162,11 +162,21 @@ The bot persists the latest processed Telegram `update_id` in `bot_runtime_state
 Implemented production commands:
 
 - `/start` and `/help` show the command list and inline menu.
+- `/cancel` clears the current active bot flow for the owner and chat.
 - `/summary` shows a structured summary from stored extracted items.
 - `/review` lists pending low-confidence reviews and supports approve/reject callbacks.
 - `/tasks` lists open task-like items and includes inline buttons to mark each item completed, partially completed, or cancelled.
 - `/logs` shows sanitized warning/error runtime events.
 - `/health` shows Postgres and LM Studio health.
+
+Bot command center shell:
+
+- The top-level inline menu exposes `Assistant`, `Ops`, `Settings`, and `Help`.
+- Assistant opens summary, tasks, review, and backfill controls.
+- Ops opens health, logs, backfill, and blacklist controls.
+- Active text-edit flows are stored in `bot_sessions` and are scoped by Telegram user id, bot chat id, and flow id.
+- Free text is ignored unless an active bot flow exists, so normal messages to the bot do not trigger commands accidentally.
+- If an active bot flow is stuck or no longer needed, send `/cancel` to clear the active bot flow.
 
 Implemented MVP operational commands:
 

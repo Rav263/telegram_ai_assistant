@@ -193,6 +193,17 @@ CREATE TABLE IF NOT EXISTS bot_runtime_state (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS bot_sessions (
+    telegram_user_id BIGINT NOT NULL,
+    bot_chat_id BIGINT NOT NULL,
+    flow_id TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (telegram_user_id, bot_chat_id, flow_id)
+);
+
 CREATE TABLE IF NOT EXISTS chat_policy_overrides (
     account_id TEXT NOT NULL,
     chat_id BIGINT NOT NULL,
@@ -228,3 +239,6 @@ CREATE INDEX IF NOT EXISTS idx_backfill_jobs_account_chat_created_at
 
 CREATE INDEX IF NOT EXISTS idx_chat_policy_overrides_account_state
     ON chat_policy_overrides(account_id, policy_state);
+
+CREATE INDEX IF NOT EXISTS idx_bot_sessions_expires_at
+    ON bot_sessions(expires_at);

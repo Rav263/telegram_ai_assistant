@@ -27,6 +27,20 @@ class FakeRuntimeEventRepository:
         return self.events[:limit]
 
 
+class FakeBotSessionRepository:
+    def __init__(self, active_session=None):
+        self.active_session = active_session
+        self.calls = []
+
+    def get_active_session(self, *, telegram_user_id, bot_chat_id, now):
+        self.calls.append(("get_active_session", telegram_user_id, bot_chat_id, now))
+        return self.active_session
+
+    def clear_user_sessions(self, *, telegram_user_id, bot_chat_id):
+        self.calls.append(("clear_user_sessions", telegram_user_id, bot_chat_id))
+        self.active_session = None
+
+
 class FakeItemQueryRepository:
     def __init__(self, items=()):
         self.items = list(items)
@@ -352,10 +366,16 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("Thoughts:", response.text)
         self.assertIn("Pricing concern", response.text)
         self.assertEqual(
-            response.reply_markup["inline_keyboard"][-1],
+            response.reply_markup["inline_keyboard"][-2:],
             [
-                {"text": "Refresh", "callback_data": "menu:summary:0"},
-                {"text": "Help", "callback_data": "menu:help:0"},
+                [
+                    {"text": "Assistant", "callback_data": "menu:assistant:0"},
+                    {"text": "Ops", "callback_data": "menu:ops:0"},
+                ],
+                [
+                    {"text": "Settings", "callback_data": "menu:settings:0"},
+                    {"text": "Help", "callback_data": "menu:help:0"},
+                ],
             ],
         )
 
@@ -377,6 +397,7 @@ class BotServicesTests(unittest.TestCase):
 
         self.assertIn("Commands:", response.text)
         for command in (
+            "/cancel",
             "/summary",
             "/tasks",
             "/review",
@@ -392,25 +413,47 @@ class BotServicesTests(unittest.TestCase):
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Summary", "callback_data": "menu:summary:0"},
-                        {"text": "Tasks", "callback_data": "menu:tasks:0"},
-                    ],
-                    [
-                        {"text": "Review", "callback_data": "menu:review:0"},
-                        {"text": "Backfill", "callback_data": "menu:backfill:0"},
-                    ],
-                    [
-                        {"text": "Health", "callback_data": "menu:health:0"},
-                        {"text": "Logs", "callback_data": "menu:logs:0"},
+                        {"text": "Assistant", "callback_data": "menu:assistant:0"},
+                        {"text": "Ops", "callback_data": "menu:ops:0"},
                     ],
                     [
                         {"text": "Settings", "callback_data": "menu:settings:0"},
-                        {"text": "Blacklist", "callback_data": "menu:blacklist:0"},
+                        {"text": "Help", "callback_data": "menu:help:0"},
                     ],
-                    [{"text": "Help", "callback_data": "menu:help:0"}],
                 ]
             },
         )
+
+    def test_assistant_menu_lists_assistant_commands_with_shell_navigation(self):
+        response = BotServices(runtime_event_repository=FakeRuntimeEventRepository()).assistant_menu()
+
+        self.assertIn("Assistant:", response.text)
+        self.assertIn("/summary", response.text)
+        self.assertIn("/tasks", response.text)
+        self.assertIn("/review", response.text)
+        self.assertEqual(
+            response.reply_markup["inline_keyboard"][-2:],
+            [
+                [
+                    {"text": "Assistant", "callback_data": "menu:assistant:0"},
+                    {"text": "Ops", "callback_data": "menu:ops:0"},
+                ],
+                [
+                    {"text": "Settings", "callback_data": "menu:settings:0"},
+                    {"text": "Help", "callback_data": "menu:help:0"},
+                ],
+            ],
+        )
+
+    def test_ops_menu_lists_ops_commands_with_shell_navigation(self):
+        response = BotServices(runtime_event_repository=FakeRuntimeEventRepository()).ops_menu()
+
+        self.assertIn("Ops:", response.text)
+        self.assertIn("/health", response.text)
+        self.assertIn("/logs", response.text)
+        self.assertIn("/backfill", response.text)
+        self.assertIn("/blacklist", response.text)
+        self.assertEqual(response.reply_markup["inline_keyboard"][-1][0]["callback_data"], "menu:settings:0")
 
     def test_tasks_lists_open_items_with_status_action_buttons(self):
         query = FakeItemQueryRepository(
@@ -440,16 +483,23 @@ class BotServicesTests(unittest.TestCase):
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Done 1", "callback_data": "status:completed:task-1"},
-                        {"text": "Partial 1", "callback_data": "status:partially_completed:task-1"},
-                        {"text": "Cancel 1", "callback_data": "status:cancelled:task-1"},
+                        {"text": "Done 1", "callback_data": "task:completed:task-1"},
+                        {"text": "Partial 1", "callback_data": "task:partially_completed:task-1"},
+                        {"text": "Cancel 1", "callback_data": "task:cancelled:task-1"},
                     ],
                     [
-                        {"text": "Done 2", "callback_data": "status:completed:task-2"},
-                        {"text": "Partial 2", "callback_data": "status:partially_completed:task-2"},
-                        {"text": "Cancel 2", "callback_data": "status:cancelled:task-2"},
+                        {"text": "Done 2", "callback_data": "task:completed:task-2"},
+                        {"text": "Partial 2", "callback_data": "task:partially_completed:task-2"},
+                        {"text": "Cancel 2", "callback_data": "task:cancelled:task-2"},
                     ],
-                    [{"text": "Menu", "callback_data": "menu:help:0"}],
+                    [
+                        {"text": "Assistant", "callback_data": "menu:assistant:0"},
+                        {"text": "Ops", "callback_data": "menu:ops:0"},
+                    ],
+                    [
+                        {"text": "Settings", "callback_data": "menu:settings:0"},
+                        {"text": "Help", "callback_data": "menu:help:0"},
+                    ],
                 ]
             },
         )
@@ -463,7 +513,7 @@ class BotServicesTests(unittest.TestCase):
         response = services.tasks()
 
         self.assertEqual(response.text, "No open tasks.")
-        self.assertIsNone(response.reply_markup)
+        self.assertIsNotNone(response.reply_markup)
 
     def test_review_lists_pending_entries_with_action_buttons(self):
         entry = ReviewEntry(
@@ -505,6 +555,30 @@ class BotServicesTests(unittest.TestCase):
 
         self.assertEqual(response.text, "No pending reviews.")
         self.assertIsNotNone(response.reply_markup)
+
+    def test_session_methods_use_repository_and_safe_placeholder(self):
+        now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+        repository = FakeBotSessionRepository(active_session=object())
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            bot_session_repository=repository,
+            clock=lambda: now,
+        )
+
+        self.assertTrue(services.has_active_session(user_id=456, chat_id=123))
+        handled = services.handle_session_message(user_id=456, chat_id=123, text="new title")
+        cancelled = services.cancel_session(user_id=456, chat_id=123)
+
+        self.assertEqual(
+            repository.calls,
+            [
+                ("get_active_session", 456, 123, now),
+                ("get_active_session", 456, 123, now),
+                ("clear_user_sessions", 456, 123),
+            ],
+        )
+        self.assertIn("Active edit flow is not implemented", handled.text)
+        self.assertEqual(cancelled.text, "Active bot flow cancelled.")
 
     def test_review_callback_dispatches_approve_and_reject(self):
         repository = FakeReviewRepository()

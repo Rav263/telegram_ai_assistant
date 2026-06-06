@@ -102,6 +102,15 @@ class ChatPolicyChoice:
 
 
 @dataclass(frozen=True)
+class BotSession:
+    telegram_user_id: int
+    bot_chat_id: int
+    flow_id: str
+    payload: dict[str, object]
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class BackfillJobSummary:
     backfill_job_id: int
     status: str

@@ -32,6 +32,7 @@ class DBSchemaTests(unittest.TestCase):
             "backfill_jobs",
             "bot_actions",
             "bot_runtime_state",
+            "bot_sessions",
             "chat_policy_overrides",
             "settings",
         )
@@ -186,6 +187,29 @@ class DBSchemaTests(unittest.TestCase):
         self.assertIn("create table if not exists bot_runtime_state", schema)
         self.assertRegex(schema, r"bot_name\s+text\s+primary\s+key")
         self.assertRegex(schema, r"last_update_id\s+bigint\s+not\s+null")
+
+    def test_bot_sessions_store_short_lived_flow_state(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists bot_sessions", schema)
+        self.assertRegex(schema, r"telegram_user_id\s+bigint\s+not\s+null")
+        self.assertRegex(schema, r"bot_chat_id\s+bigint\s+not\s+null")
+        self.assertRegex(schema, r"flow_id\s+text\s+not\s+null")
+        self.assertIn("payload jsonb not null default '{}'::jsonb", schema)
+        self.assertRegex(schema, r"expires_at\s+timestamptz\s+not\s+null")
+        self.assertIn(
+            "primary key (telegram_user_id, bot_chat_id, flow_id)",
+            schema,
+        )
+        self.assertIn(
+            "create index if not exists idx_bot_sessions_expires_at on bot_sessions(expires_at)",
+            schema,
+        )
 
     def test_chat_policy_overrides_store_bot_managed_listener_policy(self):
         self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")

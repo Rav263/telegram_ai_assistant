@@ -66,6 +66,26 @@ class FakeBotServices:
         self.calls.append(("help",))
         return "help response"
 
+    def assistant_menu(self) -> str:
+        self.calls.append(("assistant_menu",))
+        return "assistant menu response"
+
+    def ops_menu(self) -> str:
+        self.calls.append(("ops_menu",))
+        return "ops menu response"
+
+    def cancel_session(self, *, user_id: int, chat_id: int) -> str:
+        self.calls.append(("cancel_session", user_id, chat_id))
+        return "Session cancelled."
+
+    def has_active_session(self, *, user_id: int, chat_id: int) -> bool:
+        self.calls.append(("has_active_session", user_id, chat_id))
+        return False
+
+    def handle_session_message(self, *, user_id: int, chat_id: int, text: str) -> str:
+        self.calls.append(("session_message", user_id, chat_id, text))
+        return "Session message handled."
+
     def handle_review_callback(self, action: str, item_id: str) -> str:
         self.calls.append(("review_callback", action, item_id))
         return "review callback response"
@@ -145,7 +165,7 @@ class BotRouterTests(unittest.TestCase):
                 self.assertEqual(bot.sent_messages[0], (123, f"{expected_call[0]} response", None))
 
     def test_start_and_help_dispatch_to_help_service(self):
-        for command in ("/start", "/help"):
+        for command in ("/start", "/help", "/start@MyBot", "/help@MyBot"):
             with self.subTest(command=command):
                 services = FakeBotServices()
                 bot = FakeBotApi()
@@ -167,6 +187,83 @@ class BotRouterTests(unittest.TestCase):
 
                 self.assertEqual(services.calls, [("help",)])
                 self.assertEqual(bot.sent_messages[0], (123, "help response", None))
+
+    def test_cancel_command_clears_active_session(self):
+        services = FakeBotServices()
+        bot = FakeBotApi()
+        router = BotRouter(
+            access=BotAccessController(allowed_user_id=100),
+            bot_api=bot,
+            services=services,
+        )
+
+        router.handle_update(
+            {
+                "message": {
+                    "from": {"id": 100},
+                    "chat": {"id": 123},
+                    "text": "/cancel",
+                }
+            }
+        )
+
+        self.assertEqual(services.calls, [("cancel_session", 100, 123)])
+        self.assertEqual(bot.sent_messages[0], (123, "Session cancelled.", None))
+
+    def test_non_command_text_with_active_session_dispatches_to_session_handler(self):
+        class ActiveSessionServices(FakeBotServices):
+            def has_active_session(self, *, user_id: int, chat_id: int) -> bool:
+                self.calls.append(("has_active_session", user_id, chat_id))
+                return True
+
+        services = ActiveSessionServices()
+        bot = FakeBotApi()
+        router = BotRouter(
+            access=BotAccessController(allowed_user_id=100),
+            bot_api=bot,
+            services=services,
+        )
+
+        router.handle_update(
+            {
+                "message": {
+                    "from": {"id": 100},
+                    "chat": {"id": 123},
+                    "text": "New title",
+                }
+            }
+        )
+
+        self.assertEqual(
+            services.calls,
+            [
+                ("has_active_session", 100, 123),
+                ("session_message", 100, 123, "New title"),
+            ],
+        )
+        self.assertEqual(bot.sent_messages[0], (123, "Session message handled.", None))
+
+    def test_non_command_text_without_active_session_is_ignored(self):
+        services = FakeBotServices()
+        bot = FakeBotApi()
+        router = BotRouter(
+            access=BotAccessController(allowed_user_id=100),
+            bot_api=bot,
+            services=services,
+        )
+
+        router.handle_update(
+            {
+                "message": {
+                    "from": {"id": 100},
+                    "chat": {"id": 123},
+                    "text": "just text",
+                }
+            }
+        )
+
+        self.assertEqual(services.calls, [("has_active_session", 100, 123)])
+        self.assertEqual(bot.sent_messages, [])
 
     def test_owner_command_can_send_response_markup(self):
         class MarkupServices(FakeBotServices):
@@ -208,6 +305,10 @@ class BotRouterTests(unittest.TestCase):
                 "review callback response",
             ),
             "status:completed:item-1": (
+                ("status_callback", "completed", "item-1"),
+                "status callback response",
+            ),
+            "task:completed:item-1": (
                 ("status_callback", "completed", "item-1"),
                 "status callback response",
             ),
@@ -301,6 +402,8 @@ class BotRouterTests(unittest.TestCase):
     def test_menu_callbacks_dispatch_to_command_services_and_send_message(self):
         callback_cases = {
             "menu:summary:0": ("summary", "summary response"),
+            "menu:assistant:0": ("assistant_menu", "assistant menu response"),
+            "menu:ops:0": ("ops_menu", "ops menu response"),
             "menu:tasks:0": ("tasks", "tasks response"),
             "menu:review:0": ("review", "review response"),
             "menu:backfill:0": ("backfill", "backfill response"),

@@ -9,6 +9,7 @@ from .security import BotAccessController
 COMMANDS = {
     "/start": "help",
     "/help": "help",
+    "/cancel": "cancel_session",
     "/summary": "summary",
     "/tasks": "tasks",
     "/review": "review",
@@ -48,12 +49,27 @@ class BotRouter:
             return
 
         chat_id = int(message.get("chat", {}).get("id", 0))
-        command = _extract_command(str(message.get("text", "")))
+        text = str(message.get("text", ""))
+        command = _extract_command(text)
+        if command == "/cancel":
+            response = self.services.cancel_session(user_id=user_id, chat_id=chat_id)
+            self._send_response(chat_id=chat_id, response=response)
+            return
         method_name = COMMANDS.get(command)
         if method_name is None:
+            if command:
+                return
+            self._handle_session_text(user_id=user_id, chat_id=chat_id, text=text)
             return
 
         response = getattr(self.services, method_name)()
+        self._send_response(chat_id=chat_id, response=response)
+
+    def _handle_session_text(self, *, user_id: int, chat_id: int, text: str) -> None:
+        has_active_session = getattr(self.services, "has_active_session", None)
+        if has_active_session is None or not has_active_session(user_id=user_id, chat_id=chat_id):
+            return
+        response = self.services.handle_session_message(user_id=user_id, chat_id=chat_id, text=text)
         self._send_response(chat_id=chat_id, response=response)
 
     def _handle_callback(self, callback_query: Mapping[str, Any]) -> None:
@@ -79,7 +95,7 @@ class BotRouter:
             self._handle_menu_callback(callback_query=callback_query, callback_id=callback_id, action=action)
         elif kind == "review":
             answer_text = str(self.services.handle_review_callback(action, target_id))
-        elif kind == "status":
+        elif kind in {"status", "task"}:
             answer_text = str(self.services.handle_status_callback(action, target_id))
         elif kind == "backfill":
             response = self.services.handle_backfill_callback(action, target_id)
@@ -102,6 +118,8 @@ class BotRouter:
     def _handle_menu_callback(self, *, callback_query: Mapping[str, Any], callback_id: str, action: str) -> None:
         method_name = {
             "summary": "summary",
+            "assistant": "assistant_menu",
+            "ops": "ops_menu",
             "tasks": "tasks",
             "review": "review",
             "backfill": "backfill",
@@ -155,7 +173,10 @@ class BotRouter:
 
 
 def _extract_command(text: str) -> str:
-    command = text.strip().split(maxsplit=1)[0] if text.strip() else ""
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return ""
+    command = stripped.split(maxsplit=1)[0]
     if "@" in command:
         command = command.split("@", 1)[0]
     return command

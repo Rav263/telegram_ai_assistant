@@ -246,6 +246,7 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["router"].services.item_repository.__class__.__name__, "ItemRepository")
         self.assertEqual(captured["router"].services.summary_query_repository.__class__.__name__, "ItemQueryRepository")
         self.assertEqual(captured["router"].services.review_repository.__class__.__name__, "ReviewRepository")
+        self.assertEqual(captured["router"].services.bot_session_repository.__class__.__name__, "BotSessionRepository")
         self.assertEqual(
             captured["router"].services.backfill_job_query_repository.__class__.__name__,
             "BackfillJobRepository",

@@ -13,6 +13,7 @@ from .db.migrations import apply_schema
 from .backfill import ConnectionScopedBackfillJobRunner
 from .db.repositories import (
     BackfillJobRepository,
+    BotSessionRepository,
     BotRuntimeStateRepository,
     CandidateRepository,
     ChatPolicyRepository,
@@ -245,6 +246,7 @@ class AppContext:
                     ),
                     summary_query_repository=item_query_repository,
                     review_repository=review_repository,
+                    bot_session_repository=BotSessionRepository(connection),
                     chat_query_repository=ChatQueryRepository(
                         connection,
                         account_id=self.settings.telegram_ingest_account_id,

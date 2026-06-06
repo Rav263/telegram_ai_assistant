@@ -10,6 +10,7 @@ from telegram_ai_assistant.domain import (
     BackfillChatChoice,
     BackfillJobRecord,
     BackfillJobSummary,
+    BotSession,
     ChatCursor,
     ChatPolicyChoice,
     ExtractedItem,
@@ -176,6 +177,16 @@ def _chat_policy_choice_from_row(row: object) -> ChatPolicyChoice:
         title=str(_row_value(row, "title", 1) or ""),
         chat_type=str(_row_value(row, "chat_type", 2) or ""),
         policy_state=str(_row_value(row, "policy_state", 3) or "default"),
+    )
+
+
+def _bot_session_from_row(row: object) -> BotSession:
+    return BotSession(
+        telegram_user_id=int(_row_value(row, "telegram_user_id", 0)),
+        bot_chat_id=int(_row_value(row, "bot_chat_id", 1)),
+        flow_id=str(_row_value(row, "flow_id", 2)),
+        payload=_json_object(_row_value(row, "payload", 3)),
+        expires_at=_row_value(row, "expires_at", 4),
     )
 
 
@@ -608,6 +619,124 @@ class ChatPolicyRepository:
                 "policy_state": policy_state,
             },
         )
+
+
+class BotSessionRepository:
+    def __init__(self, connection: Connection):
+        self._connection = connection
+
+    def save_session(
+        self,
+        *,
+        telegram_user_id: int,
+        bot_chat_id: int,
+        flow_id: str,
+        payload: Mapping[str, object],
+        expires_at: object,
+    ) -> None:
+        sql = """
+            INSERT INTO bot_sessions (
+                telegram_user_id,
+                bot_chat_id,
+                flow_id,
+                payload,
+                expires_at
+            )
+            VALUES (
+                %(telegram_user_id)s,
+                %(bot_chat_id)s,
+                %(flow_id)s,
+                %(payload)s::jsonb,
+                %(expires_at)s
+            )
+            ON CONFLICT (telegram_user_id, bot_chat_id, flow_id)
+            DO UPDATE SET
+                payload = EXCLUDED.payload,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = NOW()
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "telegram_user_id": telegram_user_id,
+                "bot_chat_id": bot_chat_id,
+                "flow_id": flow_id,
+                "payload": _json_dumps(dict(payload)),
+                "expires_at": expires_at,
+            },
+        )
+
+    def get_active_session(
+        self,
+        *,
+        telegram_user_id: int,
+        bot_chat_id: int,
+        now: object,
+    ) -> BotSession | None:
+        sql = """
+            SELECT
+                telegram_user_id,
+                bot_chat_id,
+                flow_id,
+                payload,
+                expires_at
+            FROM bot_sessions
+            WHERE telegram_user_id = %(telegram_user_id)s
+              AND bot_chat_id = %(bot_chat_id)s
+              AND expires_at > %(now)s
+            ORDER BY updated_at DESC, flow_id
+            LIMIT 1
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {
+                "telegram_user_id": telegram_user_id,
+                "bot_chat_id": bot_chat_id,
+                "now": now,
+            },
+        )
+        return None if row is None else _bot_session_from_row(row)
+
+    def clear_session(self, *, telegram_user_id: int, bot_chat_id: int, flow_id: str) -> None:
+        sql = """
+            DELETE FROM bot_sessions
+            WHERE telegram_user_id = %(telegram_user_id)s
+              AND bot_chat_id = %(bot_chat_id)s
+              AND flow_id = %(flow_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "telegram_user_id": telegram_user_id,
+                "bot_chat_id": bot_chat_id,
+                "flow_id": flow_id,
+            },
+        )
+
+    def clear_user_sessions(self, *, telegram_user_id: int, bot_chat_id: int) -> None:
+        sql = """
+            DELETE FROM bot_sessions
+            WHERE telegram_user_id = %(telegram_user_id)s
+              AND bot_chat_id = %(bot_chat_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "telegram_user_id": telegram_user_id,
+                "bot_chat_id": bot_chat_id,
+            },
+        )
+
+    def clear_expired_sessions(self, *, now: object) -> None:
+        sql = """
+            DELETE FROM bot_sessions
+            WHERE expires_at <= %(now)s
+        """
+        _execute(self._connection, sql, {"now": now})
 
 
 class MessageRepository:
