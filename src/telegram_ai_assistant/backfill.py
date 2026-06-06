@@ -168,15 +168,23 @@ class PersistedBackfillJobRunner:
         connection_factory: Any,
         client_factory: Any,
         backfill_service_factory: Any = BackfillService,
+        runtime_event_repository: Any | None = None,
         **service_kwargs: Any,
     ):
         self.job_repository = job_repository
         self.connection_factory = connection_factory
         self.client_factory = client_factory
         self.backfill_service_factory = backfill_service_factory
+        self.runtime_event_repository = runtime_event_repository
         self.service_kwargs = dict(service_kwargs)
 
     def run_once(self, *, limit: int) -> PersistedBackfillRunResult:
+        return _run_maybe_awaitable(self._run_once(limit=limit, client=None))
+
+    async def run_once_with_client(self, *, limit: int, client: Any) -> PersistedBackfillRunResult:
+        return await self._run_once(limit=limit, client=client)
+
+    async def _run_once(self, *, limit: int, client: Any | None) -> PersistedBackfillRunResult:
         job = self.job_repository.claim_next_job()
         if job is None:
             return PersistedBackfillRunResult()
@@ -185,13 +193,14 @@ class PersistedBackfillJobRunner:
             return PersistedBackfillRunResult(backfill_jobs=1, job_id=job.backfill_job_id, status="cancelled")
 
         try:
-            service_result = self._run_backfill_service(job, limit=limit)
+            service_result = await self._run_backfill_service(job, limit=limit, client=client)
         except Exception as exc:
             self.job_repository.mark_failed(
                 job.backfill_job_id,
                 error_type=type(exc).__name__,
                 metadata=_safe_backfill_failure_metadata(exc),
             )
+            self._record_failure_event(job, exc)
             return PersistedBackfillRunResult(
                 backfill_jobs=1,
                 failures=1,
@@ -227,7 +236,7 @@ class PersistedBackfillJobRunner:
             status=status,
         )
 
-    def _run_backfill_service(self, job: Any, *, limit: int) -> Any:
+    async def _run_backfill_service(self, job: Any, *, limit: int, client: Any | None) -> Any:
         service = self.backfill_service_factory(
             account_id=job.account_id,
             chat_id=job.chat_id,
@@ -239,12 +248,37 @@ class PersistedBackfillJobRunner:
             client_factory=self.client_factory,
             **self.service_kwargs,
         )
-        return _run_maybe_awaitable(service.run_once())
+        if client is not None:
+            return await _await_maybe(service.run_once_with_client(client))
+        return await _await_maybe(service.run_once())
+
+    def _record_failure_event(self, job: Any, error: BaseException) -> None:
+        if self.runtime_event_repository is None:
+            return
+        metadata = {
+            "job_id": int(job.backfill_job_id),
+            "chat_id": int(job.chat_id),
+            "error_type": type(error).__name__,
+        }
+        metadata.update(_safe_backfill_failure_metadata(error))
+        self.runtime_event_repository.record_event(
+            component="listener",
+            severity="warning",
+            event_type="backfill_failed",
+            message="Backfill job failed",
+            metadata=metadata,
+        )
 
 
 def _run_maybe_awaitable(value: Any) -> Any:
     if inspect.isawaitable(value):
         return asyncio.run(value)
+    return value
+
+
+async def _await_maybe(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
     return value
 
 
