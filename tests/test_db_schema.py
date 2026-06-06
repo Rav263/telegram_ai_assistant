@@ -186,6 +186,68 @@ class DBSchemaTests(unittest.TestCase):
         self.assertRegex(schema, r"bot_name\s+text\s+primary\s+key")
         self.assertRegex(schema, r"last_update_id\s+bigint\s+not\s+null")
 
+    def test_backfill_jobs_support_persisted_bot_managed_execution(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists backfill_jobs", schema)
+        self.assertRegex(schema, r"chat_id\s+bigint\s+not\s+null\s+default\s+0")
+        self.assertRegex(schema, r"chat_title\s+text\s+not\s+null\s+default\s+''")
+        self.assertRegex(schema, r"next_before_message_id\s+bigint")
+        self.assertRegex(schema, r"saved_count\s+integer\s+not\s+null\s+default\s+0")
+        self.assertRegex(schema, r"last_error_type\s+text\s+not\s+null\s+default\s+''")
+        self.assertIn("last_error_metadata jsonb not null default '{}'::jsonb", schema)
+        self.assertRegex(schema, r"updated_at\s+timestamptz\s+not\s+null\s+default\s+now\(\)")
+        self.assertIn(
+            "create index if not exists idx_backfill_jobs_account_status_created_at on backfill_jobs(account_id, status, created_at)",
+            schema,
+        )
+        self.assertIn(
+            "create index if not exists idx_backfill_jobs_account_chat_created_at on backfill_jobs(account_id, chat_id, created_at desc)",
+            schema,
+        )
+
+    def test_schema_adds_backfill_job_columns_to_existing_tables(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists chat_id bigint not null default 0",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists chat_title text not null default ''",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists next_before_message_id bigint",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists saved_count integer not null default 0",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists last_error_type text not null default ''",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists last_error_metadata jsonb not null default '{}'::jsonb",
+            schema,
+        )
+        self.assertIn(
+            "alter table backfill_jobs add column if not exists updated_at timestamptz not null default now()",
+            schema,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

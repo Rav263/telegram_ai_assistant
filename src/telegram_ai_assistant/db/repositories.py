@@ -7,6 +7,8 @@ from enum import StrEnum
 from typing import Any, Protocol, Sequence
 
 from telegram_ai_assistant.domain import (
+    BackfillChatChoice,
+    BackfillJobRecord,
     BackfillJobSummary,
     ExtractedItem,
     ItemStatus,
@@ -131,14 +133,58 @@ def _review_entry_from_row(row: object) -> ReviewEntry:
 
 
 def _backfill_job_summary_from_row(row: object) -> BackfillJobSummary:
+    last_error_type = str(_optional_row_value(row, "last_error_type", 8, "") or "")
+    legacy_error = str(_optional_row_value(row, "error", 4, "") or "")
     return BackfillJobSummary(
         backfill_job_id=int(_row_value(row, "backfill_job_id", 0)),
         status=str(_row_value(row, "status", 1)),
-        from_date=_row_value(row, "from_date", 2),
-        to_date=_row_value(row, "to_date", 3),
-        error=str(_row_value(row, "error", 4) or ""),
-        created_at=_row_value(row, "created_at", 5),
+        chat_id=int(_optional_row_value(row, "chat_id", 2, 0) or 0),
+        chat_title=str(_optional_row_value(row, "chat_title", 3, "") or ""),
+        from_date=_row_value(row, "from_date", 4),
+        to_date=_row_value(row, "to_date", 5),
+        saved_count=int(_optional_row_value(row, "saved_count", 6, 0) or 0),
+        next_before_message_id=_optional_row_value(row, "next_before_message_id", 7, None),
+        last_error_type=last_error_type,
+        error=last_error_type or legacy_error,
+        created_at=_row_value(row, "created_at", 9),
     )
+
+
+def _backfill_chat_choice_from_row(row: object) -> BackfillChatChoice:
+    return BackfillChatChoice(
+        chat_id=int(_row_value(row, "chat_id", 0)),
+        title=str(_row_value(row, "title", 1) or ""),
+        chat_type=str(_row_value(row, "chat_type", 2) or ""),
+    )
+
+
+def _backfill_job_record_from_row(row: object) -> BackfillJobRecord:
+    return BackfillJobRecord(
+        backfill_job_id=int(_row_value(row, "backfill_job_id", 0)),
+        account_id=str(_row_value(row, "account_id", 1)),
+        chat_id=int(_row_value(row, "chat_id", 2)),
+        chat_title=str(_row_value(row, "chat_title", 3) or ""),
+        status=str(_row_value(row, "status", 4)),
+        from_date=_row_value(row, "from_date", 5),
+        to_date=_row_value(row, "to_date", 6),
+        next_before_message_id=_row_value(row, "next_before_message_id", 7),
+        saved_count=int(_row_value(row, "saved_count", 8) or 0),
+        last_error_type=str(_row_value(row, "last_error_type", 9) or ""),
+        last_error_metadata=_json_object(_row_value(row, "last_error_metadata", 10)),
+        created_at=_row_value(row, "created_at", 11),
+        started_at=_row_value(row, "started_at", 12),
+        finished_at=_row_value(row, "finished_at", 13),
+        updated_at=_row_value(row, "updated_at", 14),
+    )
+
+
+def _optional_row_value(row: object, key: str, index: int, default: Any) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key, default)
+    try:
+        return row[index]  # type: ignore[index]
+    except IndexError:
+        return default
 
 
 def _review_item_from_row(row: object) -> ExtractedItem | None:
@@ -1069,9 +1115,13 @@ class BackfillJobQueryRepository:
             SELECT
                 backfill_job_id,
                 status,
+                chat_id,
+                chat_title,
                 from_date,
                 to_date,
-                error,
+                saved_count,
+                next_before_message_id,
+                last_error_type,
                 created_at
             FROM backfill_jobs
             WHERE account_id = %(account_id)s
@@ -1087,6 +1137,241 @@ class BackfillJobQueryRepository:
             },
         )
         return [_backfill_job_summary_from_row(row) for row in rows]
+
+
+class ChatQueryRepository:
+    def __init__(
+        self,
+        connection: Connection,
+        *,
+        account_id: str,
+        allowed_channel_ids: frozenset[int] = frozenset(),
+        denied_chat_ids: frozenset[int] = frozenset(),
+    ):
+        self._connection = connection
+        self._account_id = account_id
+        self._allowed_channel_ids = allowed_channel_ids
+        self._denied_chat_ids = denied_chat_ids
+
+    def list_backfill_chats(self, *, page: int, page_size: int = 6) -> list[BackfillChatChoice]:
+        offset = max(page, 0) * page_size
+        sql = """
+            SELECT
+                chat_id,
+                title,
+                chat_type
+            FROM chats
+            WHERE account_id = %(account_id)s
+              AND chat_id <> ALL(%(denied_chat_ids)s)
+              AND (
+                    chat_type IN ('private', 'group', 'supergroup')
+                 OR (chat_type = 'channel' AND chat_id = ANY(%(allowed_channel_ids)s))
+                 OR (chat_type = 'broadcast' AND chat_id = ANY(%(allowed_channel_ids)s))
+              )
+            ORDER BY COALESCE(NULLIF(title, ''), chat_id::TEXT), chat_id
+            LIMIT %(limit)s
+            OFFSET %(offset)s
+        """
+        rows = _fetchall(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "allowed_channel_ids": sorted(self._allowed_channel_ids),
+                "denied_chat_ids": sorted(self._denied_chat_ids),
+                "limit": page_size,
+                "offset": offset,
+            },
+        )
+        return [_backfill_chat_choice_from_row(row) for row in rows]
+
+
+class BackfillJobRepository(BackfillJobQueryRepository):
+    def create_job(
+        self,
+        *,
+        chat_id: int,
+        chat_title: str,
+        from_date: datetime,
+        to_date: datetime,
+    ) -> BackfillJobRecord:
+        sql = f"""
+            INSERT INTO backfill_jobs (
+                account_id,
+                chat_id,
+                chat_title,
+                status,
+                from_date,
+                to_date
+            )
+            VALUES (
+                %(account_id)s,
+                %(chat_id)s,
+                %(chat_title)s,
+                'pending',
+                %(from_date)s,
+                %(to_date)s
+            )
+            RETURNING {_BACKFILL_JOB_RETURNING_COLUMNS}
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "chat_id": chat_id,
+                "chat_title": chat_title,
+                "from_date": from_date,
+                "to_date": to_date,
+            },
+        )
+        if row is None:
+            raise RuntimeError("backfill job was not created")
+        return _backfill_job_record_from_row(row)
+
+    def request_cancel(self, backfill_job_id: int) -> None:
+        sql = """
+            UPDATE backfill_jobs
+            SET
+                status = 'cancel_requested',
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND backfill_job_id = %(backfill_job_id)s
+              AND status IN ('pending', 'running')
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "backfill_job_id": backfill_job_id,
+            },
+        )
+
+    def claim_next_job(self) -> BackfillJobRecord | None:
+        sql = f"""
+            UPDATE backfill_jobs
+            SET
+                status = CASE
+                    WHEN status = 'pending' THEN 'running'
+                    ELSE status
+                END,
+                started_at = COALESCE(started_at, NOW()),
+                updated_at = NOW()
+            WHERE backfill_job_id = (
+                SELECT backfill_job_id
+                FROM backfill_jobs
+                WHERE account_id = %(account_id)s
+                  AND status IN ('pending', 'running', 'cancel_requested')
+                ORDER BY created_at, backfill_job_id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {_BACKFILL_JOB_RETURNING_COLUMNS}
+        """
+        row = _fetchone(self._connection, sql, {"account_id": self._account_id})
+        return None if row is None else _backfill_job_record_from_row(row)
+
+    def record_progress(
+        self,
+        *,
+        backfill_job_id: int,
+        saved_count: int,
+        next_before_message_id: int | None,
+    ) -> None:
+        sql = """
+            UPDATE backfill_jobs
+            SET
+                saved_count = saved_count + %(saved_count)s,
+                next_before_message_id = %(next_before_message_id)s,
+                status = 'running',
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND backfill_job_id = %(backfill_job_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "backfill_job_id": backfill_job_id,
+                "saved_count": saved_count,
+                "next_before_message_id": next_before_message_id,
+            },
+        )
+
+    def mark_completed(self, backfill_job_id: int) -> None:
+        self._mark_terminal(backfill_job_id, status="completed")
+
+    def mark_cancelled(self, backfill_job_id: int) -> None:
+        self._mark_terminal(backfill_job_id, status="cancelled")
+
+    def mark_failed(
+        self,
+        backfill_job_id: int,
+        *,
+        error_type: str,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        sql = """
+            UPDATE backfill_jobs
+            SET
+                status = 'failed',
+                last_error_type = %(last_error_type)s,
+                last_error_metadata = %(last_error_metadata)s::jsonb,
+                finished_at = NOW(),
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND backfill_job_id = %(backfill_job_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "backfill_job_id": backfill_job_id,
+                "last_error_type": error_type,
+                "last_error_metadata": _json_dumps(metadata or {}),
+            },
+        )
+
+    def _mark_terminal(self, backfill_job_id: int, *, status: str) -> None:
+        sql = f"""
+            UPDATE backfill_jobs
+            SET
+                status = '{status}',
+                finished_at = NOW(),
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND backfill_job_id = %(backfill_job_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "backfill_job_id": backfill_job_id,
+            },
+        )
+
+
+_BACKFILL_JOB_RETURNING_COLUMNS = """
+    backfill_job_id,
+    account_id,
+    chat_id,
+    chat_title,
+    status,
+    from_date,
+    to_date,
+    next_before_message_id,
+    saved_count,
+    last_error_type,
+    last_error_metadata,
+    created_at,
+    started_at,
+    finished_at,
+    updated_at
+"""
 
 
 class RuntimeEventRepository:

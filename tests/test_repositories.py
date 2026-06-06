@@ -5,8 +5,10 @@ import unittest
 from telegram_ai_assistant.db import repositories
 from telegram_ai_assistant.db.migrations import apply_schema
 from telegram_ai_assistant.db.repositories import (
+    BackfillJobRepository,
     BackfillJobQueryRepository,
     CandidateRepository,
+    ChatQueryRepository,
     ItemRepository,
     LLMRunRepository,
     BotRuntimeStateRepository,
@@ -17,6 +19,8 @@ from telegram_ai_assistant.db.repositories import (
     RuntimeEventRepository,
 )
 from telegram_ai_assistant.domain import (
+    BackfillChatChoice,
+    BackfillJobRecord,
     BackfillJobSummary,
     ExtractedItem,
     ItemStatus,
@@ -721,9 +725,13 @@ class BackfillJobQueryRepositoryTests(unittest.TestCase):
             {
                 "backfill_job_id": 3,
                 "status": "completed",
+                "chat_id": 1001,
+                "chat_title": "Alice",
                 "from_date": now,
                 "to_date": now,
-                "error": "",
+                "saved_count": 42,
+                "next_before_message_id": None,
+                "last_error_type": "",
                 "created_at": now,
             }
         ]
@@ -742,13 +750,176 @@ class BackfillJobQueryRepositoryTests(unittest.TestCase):
                 BackfillJobSummary(
                     backfill_job_id=3,
                     status="completed",
+                    chat_id=1001,
+                    chat_title="Alice",
                     from_date=now,
                     to_date=now,
-                    error="",
+                    saved_count=42,
+                    next_before_message_id=None,
+                    last_error_type="",
                     created_at=now,
                 )
             ],
         )
+
+
+class ChatQueryRepositoryTests(unittest.TestCase):
+    def test_list_backfill_chats_reads_policy_filtered_page(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchall_result = [
+            {"chat_id": 1001, "title": "Alice", "chat_type": "private"},
+            {"chat_id": 1002, "title": "Project", "chat_type": "supergroup"},
+        ]
+
+        chats = ChatQueryRepository(
+            connection,
+            account_id="main",
+            allowed_channel_ids=frozenset({-100111}),
+            denied_chat_ids=frozenset({2002}),
+        ).list_backfill_chats(page=1, page_size=6)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from chats", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertIn("chat_id <> all(%(denied_chat_ids)s)", normalized_sql)
+        self.assertIn("chat_id = any(%(allowed_channel_ids)s)", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 6)
+        self.assertEqual(params["offset"], 6)
+        self.assertEqual(params["allowed_channel_ids"], [-100111])
+        self.assertEqual(params["denied_chat_ids"], [2002])
+        self.assertEqual(
+            chats,
+            [
+                BackfillChatChoice(chat_id=1001, title="Alice", chat_type="private"),
+                BackfillChatChoice(chat_id=1002, title="Project", chat_type="supergroup"),
+            ],
+        )
+
+
+class BackfillJobRepositoryTests(unittest.TestCase):
+    def test_create_job_inserts_pending_job_and_returns_record(self):
+        connection = RecordingConnection()
+        created_at = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+        from_date = datetime(2026, 5, 7, 9, 0, tzinfo=UTC)
+        to_date = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchone_result = {
+            "backfill_job_id": 7,
+            "account_id": "main",
+            "chat_id": 1001,
+            "chat_title": "Alice",
+            "status": "pending",
+            "from_date": from_date,
+            "to_date": to_date,
+            "next_before_message_id": None,
+            "saved_count": 0,
+            "last_error_type": "",
+            "last_error_metadata": {},
+            "created_at": created_at,
+            "started_at": None,
+            "finished_at": None,
+            "updated_at": created_at,
+        }
+
+        job = BackfillJobRepository(connection, account_id="main").create_job(
+            chat_id=1001,
+            chat_title="Alice",
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("insert into backfill_jobs", normalized_sql)
+        self.assertIn("'pending'", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["chat_id"], 1001)
+        self.assertEqual(params["chat_title"], "Alice")
+        self.assertEqual(job.backfill_job_id, 7)
+        self.assertEqual(job.status, "pending")
+
+    def test_request_cancel_updates_pending_and_running_jobs(self):
+        connection = RecordingConnection()
+
+        BackfillJobRepository(connection, account_id="main").request_cancel(7)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("update backfill_jobs", normalized_sql)
+        self.assertIn("status = 'cancel_requested'", normalized_sql)
+        self.assertIn("status in ('pending', 'running')", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["backfill_job_id"], 7)
+
+    def test_claim_next_job_uses_row_lock_and_returns_record(self):
+        connection = RecordingConnection()
+        now = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchone_result = {
+            "backfill_job_id": 7,
+            "account_id": "main",
+            "chat_id": 1001,
+            "chat_title": "Alice",
+            "status": "running",
+            "from_date": now,
+            "to_date": now,
+            "next_before_message_id": 500,
+            "saved_count": 10,
+            "last_error_type": "",
+            "last_error_metadata": {},
+            "created_at": now,
+            "started_at": now,
+            "finished_at": None,
+            "updated_at": now,
+        }
+
+        job = BackfillJobRepository(connection, account_id="main").claim_next_job()
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("for update skip locked", normalized_sql)
+        self.assertIn("status in ('pending', 'running', 'cancel_requested')", normalized_sql)
+        self.assertIn("returning", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertIsInstance(job, BackfillJobRecord)
+        self.assertEqual(job.backfill_job_id, 7)
+        self.assertEqual(job.next_before_message_id, 500)
+
+    def test_record_progress_accumulates_saved_count_and_cursor(self):
+        connection = RecordingConnection()
+
+        BackfillJobRepository(connection, account_id="main").record_progress(
+            backfill_job_id=7,
+            saved_count=12,
+            next_before_message_id=450,
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("saved_count = saved_count + %(saved_count)s", normalized_sql)
+        self.assertIn("next_before_message_id = %(next_before_message_id)s", normalized_sql)
+        self.assertEqual(params["saved_count"], 12)
+        self.assertEqual(params["next_before_message_id"], 450)
+
+    def test_terminal_updates_store_sanitized_failure_metadata(self):
+        connection = RecordingConnection()
+        repository = BackfillJobRepository(connection, account_id="main")
+
+        repository.mark_completed(7)
+        repository.mark_cancelled(8)
+        repository.mark_failed(9, error_type="TimeoutError", metadata={"endpoint_host": "localhost"})
+
+        completed_sql, completed_params = connection.statements[0]
+        cancelled_sql, cancelled_params = connection.statements[1]
+        failed_sql, failed_params = connection.statements[2]
+        self.assertIn("status = 'completed'", compact_sql(completed_sql).lower())
+        self.assertIn("status = 'cancelled'", compact_sql(cancelled_sql).lower())
+        self.assertIn("status = 'failed'", compact_sql(failed_sql).lower())
+        self.assertEqual(completed_params["backfill_job_id"], 7)
+        self.assertEqual(cancelled_params["backfill_job_id"], 8)
+        self.assertEqual(failed_params["backfill_job_id"], 9)
+        self.assertEqual(failed_params["last_error_type"], "TimeoutError")
+        self.assertEqual(json.loads(failed_params["last_error_metadata"]), {"endpoint_host": "localhost"})
 
 
 class RuntimeEventRepositoryTests(unittest.TestCase):

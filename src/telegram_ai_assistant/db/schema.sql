@@ -153,15 +153,30 @@ CREATE TABLE IF NOT EXISTS runtime_events (
 CREATE TABLE IF NOT EXISTS backfill_jobs (
     backfill_job_id BIGSERIAL PRIMARY KEY,
     account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+    chat_id BIGINT NOT NULL DEFAULT 0,
+    chat_title TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL,
     from_date TIMESTAMPTZ NOT NULL,
     to_date TIMESTAMPTZ NOT NULL,
+    next_before_message_id BIGINT,
+    saved_count INTEGER NOT NULL DEFAULT 0,
     cursor_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     error TEXT NOT NULL DEFAULT '',
+    last_error_type TEXT NOT NULL DEFAULT '',
+    last_error_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS chat_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS chat_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS next_before_message_id BIGINT;
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS saved_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS last_error_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS last_error_metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS bot_actions (
     bot_action_id BIGSERIAL PRIMARY KEY,
@@ -195,3 +210,9 @@ CREATE INDEX IF NOT EXISTS idx_extracted_items_status
 
 CREATE INDEX IF NOT EXISTS idx_runtime_events_severity_created_at
     ON runtime_events(severity, created_at DESC, runtime_event_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_backfill_jobs_account_status_created_at
+    ON backfill_jobs(account_id, status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_backfill_jobs_account_chat_created_at
+    ON backfill_jobs(account_id, chat_id, created_at DESC);
