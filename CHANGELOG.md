@@ -38,3 +38,5 @@
 - Added bot-managed persisted Telegram backfill jobs with chat pagination, day presets, cancellation, and worker execution.
 - Moved bot-managed backfill execution to `app-listener` so the Telethon session has one runtime owner.
 - Added safe listener runtime events for backfill failures.
+- Added listener startup catch-up for missed messages in known chats.
+- Added bot-managed listener chat policy overrides through `/blacklist`.

@@ -89,6 +89,10 @@ class BotRouter:
             response = self.services.handle_backfill_callback(action, target_id)
             self._handle_callback_response(callback_query=callback_query, callback_id=callback_id, response=response)
             return
+        elif kind == "policy":
+            response = self.services.handle_policy_callback(action, target_id)
+            self._handle_callback_response(callback_query=callback_query, callback_id=callback_id, response=response)
+            return
         else:
             return
 
@@ -104,6 +108,7 @@ class BotRouter:
             "health": "health",
             "logs": "logs",
             "settings": "settings",
+            "blacklist": "blacklist",
             "help": "help",
         }.get(action)
         if method_name is None:

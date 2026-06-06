@@ -8,6 +8,7 @@ from telegram_ai_assistant.db.repositories import (
     BackfillJobRepository,
     BackfillJobQueryRepository,
     CandidateRepository,
+    ChatPolicyRepository,
     ChatQueryRepository,
     ItemRepository,
     LLMRunRepository,
@@ -22,6 +23,7 @@ from telegram_ai_assistant.domain import (
     BackfillChatChoice,
     BackfillJobRecord,
     BackfillJobSummary,
+    ChatPolicyChoice,
     ExtractedItem,
     ItemStatus,
     ItemType,
@@ -294,6 +296,77 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(params["account_id"], "main")
         self.assertEqual(params["chat_id"], 100)
         self.assertEqual(params["error_type"], "rate_limited")
+
+    def test_list_catch_up_chats_reads_known_chats_with_cursors(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchall_result = [
+            {
+                "chat_id": 100,
+                "title": "Tasks",
+                "chat_type": "group",
+                "last_ingested_message_id": 456,
+            }
+        ]
+
+        chats = repositories.ChatRepository(connection).list_catch_up_chats("main")
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("select", normalized_sql)
+        self.assertIn("last_ingested_message_id", normalized_sql)
+        self.assertIn("from chats", normalized_sql)
+        self.assertIn("where account_id = %(account_id)s", normalized_sql)
+        self.assertIn("last_ingested_message_id > 0", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(chats[0].chat_id, 100)
+        self.assertEqual(chats[0].title, "Tasks")
+        self.assertEqual(chats[0].chat_type, "group")
+        self.assertEqual(chats[0].last_ingested_message_id, 456)
+
+
+class ChatPolicyRepositoryTests(unittest.TestCase):
+    def test_effective_policy_combines_env_and_database_overrides(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchall_result = [
+            {"chat_id": -100777, "policy_state": "allow"},
+            {"chat_id": 1002, "policy_state": "deny"},
+        ]
+
+        policy = ChatPolicyRepository(connection, account_id="main").effective_policy(
+            base_allowed_channel_ids=frozenset({-100111}),
+            base_denied_chat_ids=frozenset({1001}),
+        )
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from chat_policy_overrides", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(policy.allowed_channel_ids, frozenset({-100111, -100777}))
+        self.assertEqual(policy.denied_chat_ids, frozenset({1001, 1002}))
+
+    def test_set_policy_upserts_allow_and_deny_states(self):
+        connection = RecordingConnection()
+        repository = ChatPolicyRepository(connection, account_id="main")
+
+        repository.allow_chat(1001)
+        repository.deny_chat(1002)
+
+        allow_sql, allow_params = connection.statements[0]
+        deny_sql, deny_params = connection.statements[1]
+        self.assertIn("insert into chat_policy_overrides", compact_sql(allow_sql).lower())
+        self.assertIn("on conflict (account_id, chat_id)", compact_sql(allow_sql).lower())
+        self.assertEqual(allow_params["policy_state"], "allow")
+        self.assertEqual(deny_params["policy_state"], "deny")
+
+    def test_reset_policy_deletes_override(self):
+        connection = RecordingConnection()
+
+        ChatPolicyRepository(connection, account_id="main").reset_chat(1001)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("delete from chat_policy_overrides", normalized_sql)
+        self.assertEqual(params, {"account_id": "main", "chat_id": 1001})
 
 
 class CandidateRepositoryTests(unittest.TestCase):
@@ -815,6 +888,30 @@ class ChatQueryRepositoryTests(unittest.TestCase):
         self.assertIn("chat_id <> all(%(denied_chat_ids)s)", normalized_sql)
         self.assertEqual(params["chat_id"], 1001)
         self.assertEqual(chat, BackfillChatChoice(chat_id=1001, title="Alice", chat_type="private"))
+
+    def test_list_policy_chats_reads_known_chats_with_override_state(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchall_result = [
+            {"chat_id": 1001, "title": "Alice", "chat_type": "private", "policy_state": "deny"},
+            {"chat_id": -100777, "title": "News", "chat_type": "channel", "policy_state": None},
+        ]
+
+        chats = ChatQueryRepository(connection, account_id="main").list_policy_chats(page=0, page_size=6)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from chats", normalized_sql)
+        self.assertIn("left join chat_policy_overrides", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["limit"], 6)
+        self.assertEqual(params["offset"], 0)
+        self.assertEqual(
+            chats,
+            [
+                ChatPolicyChoice(chat_id=1001, title="Alice", chat_type="private", policy_state="deny"),
+                ChatPolicyChoice(chat_id=-100777, title="News", chat_type="channel", policy_state="default"),
+            ],
+        )
 
 
 class BackfillJobRepositoryTests(unittest.TestCase):

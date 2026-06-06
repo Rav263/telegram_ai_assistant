@@ -108,7 +108,9 @@ Set `TELEGRAM_INGEST_DEBUG_MESSAGES=true` only for local troubleshooting when yo
 
 Use `telegram-ai-assistant run listener` for live update ingestion. It listens for new Telegram messages and saves accepted updates without intentionally marking messages read.
 
-By default the listener reads private chats, basic groups, and supergroups. Broadcast channels are ignored unless their ids are listed in `TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS`. Any id in `TELEGRAM_LISTENER_DENIED_CHAT_IDS` is never read.
+By default the listener reads private chats, basic groups, and supergroups. Broadcast channels are ignored unless their ids are listed in `TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS` or allowed through the owner-only bot. Any id in `TELEGRAM_LISTENER_DENIED_CHAT_IDS` is never read, and bot-managed deny overrides are also enforced.
+
+On startup, after registering the live update handler, the listener catches up known chats that already have a non-zero `last_ingested_message_id`. It reads only messages newer than the stored cursor through the same read-only Telegram path and advances each chat cursor after saving. The per-chat startup catch-up batch size uses `TELEGRAM_INGEST_LIMIT`.
 
 app-listener executes persisted backfill jobs created from `/backfill` with the already connected Telegram user session. Do not scale `app-listener` above one replica because the Telethon session is a singleton runtime resource.
 
@@ -116,7 +118,7 @@ app-listener executes persisted backfill jobs created from `/backfill` with the 
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run listener
 ```
 
-Keep `run ingestor` available as cursor catch-up after the machine sleeps or the listener is stopped.
+Keep `run ingestor` available for controlled single-chat debugging, but normal missed-message recovery now happens inside `app-listener` on startup.
 
 ## Worker
 
@@ -168,7 +170,7 @@ Implemented production commands:
 
 Implemented MVP operational commands:
 
-- `/blacklist` shows listener allow/deny policy and env-based change instructions.
+- `/blacklist` shows listener allow/deny policy, lists known chats 6 per page, and supports allow/deny/reset buttons for bot-managed policy overrides.
 - `/settings` shows non-secret runtime settings.
 
 Bot-managed backfill:

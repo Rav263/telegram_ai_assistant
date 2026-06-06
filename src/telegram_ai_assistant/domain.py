@@ -86,6 +86,22 @@ class BackfillChatChoice:
 
 
 @dataclass(frozen=True)
+class ChatCursor:
+    chat_id: int
+    title: str
+    chat_type: str
+    last_ingested_message_id: int
+
+
+@dataclass(frozen=True)
+class ChatPolicyChoice:
+    chat_id: int
+    title: str
+    chat_type: str
+    policy_state: str
+
+
+@dataclass(frozen=True)
 class BackfillJobSummary:
     backfill_job_id: int
     status: str

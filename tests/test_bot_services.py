@@ -6,6 +6,7 @@ from telegram_ai_assistant.domain import (
     BackfillChatChoice,
     BackfillJobRecord,
     BackfillJobSummary,
+    ChatPolicyChoice,
     ExtractedItem,
     ItemStatus,
     ItemType,
@@ -95,6 +96,25 @@ class FakeChatQueryRepository:
     def get_backfill_chat(self, chat_id):
         self.calls.append(("get_backfill_chat", chat_id))
         return next((chat for chat in self.chats if chat.chat_id == chat_id), None)
+
+    def list_policy_chats(self, *, page, page_size):
+        self.calls.append(("list_policy_chats", page, page_size))
+        start = page * page_size
+        return self.chats[start : start + page_size]
+
+
+class FakeChatPolicyRepository:
+    def __init__(self):
+        self.calls = []
+
+    def allow_chat(self, chat_id):
+        self.calls.append(("allow_chat", chat_id))
+
+    def deny_chat(self, chat_id):
+        self.calls.append(("deny_chat", chat_id))
+
+    def reset_chat(self, chat_id):
+        self.calls.append(("reset_chat", chat_id))
 
 
 class FakeBackfillJobRepository(FakeBackfillJobQueryRepository):
@@ -385,8 +405,9 @@ class BotServicesTests(unittest.TestCase):
                     ],
                     [
                         {"text": "Settings", "callback_data": "menu:settings:0"},
-                        {"text": "Help", "callback_data": "menu:help:0"},
+                        {"text": "Blacklist", "callback_data": "menu:blacklist:0"},
                     ],
+                    [{"text": "Help", "callback_data": "menu:help:0"}],
                 ]
             },
         )
@@ -544,6 +565,78 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("allowed_channel_ids=777", response.text)
         self.assertIn("denied_chat_ids=888", response.text)
         self.assertNotIn("api_hash", response.text.lower())
+
+    def test_blacklist_lists_six_policy_chats_with_action_buttons(self):
+        chats = FakeChatQueryRepository(
+            [
+                ChatPolicyChoice(chat_id=1001, title="Alice", chat_type="private", policy_state="default"),
+                ChatPolicyChoice(chat_id=-100777, title="News", chat_type="channel", policy_state="allow"),
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            settings_snapshot=FakeSettingsSnapshot(),
+            chat_query_repository=chats,
+        )
+
+        response = services.blacklist()
+
+        self.assertEqual(chats.calls, [("list_policy_chats", 0, 6)])
+        self.assertIn("Policy chats:", response.text)
+        self.assertIn("Alice [private/default]", response.text)
+        self.assertIn("News [channel/allow]", response.text)
+        self.assertEqual(
+            response.reply_markup["inline_keyboard"][0],
+            [
+                {"text": "Deny 1", "callback_data": "policy:deny:1001"},
+                {"text": "Allow 1", "callback_data": "policy:allow:1001"},
+                {"text": "Reset 1", "callback_data": "policy:reset:1001"},
+            ],
+        )
+        self.assertEqual(response.reply_markup["inline_keyboard"][-1][0]["callback_data"], "policy:p:1")
+
+    def test_policy_page_callback_has_previous_and_next_buttons(self):
+        chats = FakeChatQueryRepository(
+            [
+                ChatPolicyChoice(chat_id=chat_id, title=f"Chat {chat_id}", chat_type="private", policy_state="default")
+                for chat_id in range(12)
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            settings_snapshot=FakeSettingsSnapshot(),
+            chat_query_repository=chats,
+        )
+
+        response = services.handle_policy_callback("p", "1")
+
+        self.assertEqual(chats.calls, [("list_policy_chats", 1, 6)])
+        self.assertEqual(response.reply_markup["inline_keyboard"][-1][0]["callback_data"], "policy:p:0")
+        self.assertEqual(response.reply_markup["inline_keyboard"][-1][1]["callback_data"], "policy:p:2")
+
+    def test_policy_callbacks_apply_overrides_and_refresh_first_page(self):
+        chats = FakeChatQueryRepository(
+            [ChatPolicyChoice(chat_id=1001, title="Alice", chat_type="private", policy_state="deny")]
+        )
+        policy = FakeChatPolicyRepository()
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            settings_snapshot=FakeSettingsSnapshot(),
+            chat_query_repository=chats,
+            chat_policy_repository=policy,
+        )
+
+        denied = services.handle_policy_callback("deny", "1001")
+        allowed = services.handle_policy_callback("allow", "-100777")
+        reset = services.handle_policy_callback("reset", "1001")
+
+        self.assertEqual(
+            policy.calls,
+            [("deny_chat", 1001), ("allow_chat", -100777), ("reset_chat", 1001)],
+        )
+        self.assertIn("Policy updated.", denied.text)
+        self.assertIn("Policy updated.", allowed.text)
+        self.assertIn("Policy updated.", reset.text)
 
     def test_settings_shows_allowlisted_non_secret_values(self):
         services = BotServices(

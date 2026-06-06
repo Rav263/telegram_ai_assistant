@@ -193,6 +193,15 @@ CREATE TABLE IF NOT EXISTS bot_runtime_state (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS chat_policy_overrides (
+    account_id TEXT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    policy_state TEXT NOT NULL CHECK (policy_state IN ('allow', 'deny')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_id, chat_id),
+    FOREIGN KEY (account_id, chat_id) REFERENCES chats(account_id, chat_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     setting_key TEXT PRIMARY KEY,
     setting_value JSONB NOT NULL,
@@ -216,3 +225,6 @@ CREATE INDEX IF NOT EXISTS idx_backfill_jobs_account_status_created_at
 
 CREATE INDEX IF NOT EXISTS idx_backfill_jobs_account_chat_created_at
     ON backfill_jobs(account_id, chat_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_chat_policy_overrides_account_state
+    ON chat_policy_overrides(account_id, policy_state);

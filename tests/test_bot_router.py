@@ -78,6 +78,10 @@ class FakeBotServices:
         self.calls.append(("backfill_callback", action, job_id))
         return "backfill callback response"
 
+    def handle_policy_callback(self, action: str, target_id: str) -> str:
+        self.calls.append(("policy_callback", action, target_id))
+        return "policy callback response"
+
 
 class BotRouterTests(unittest.TestCase):
     def test_denied_user_is_ignored_and_logged(self):
@@ -211,6 +215,10 @@ class BotRouterTests(unittest.TestCase):
                 ("backfill_callback", "cancel", "job-1"),
                 "backfill callback response",
             ),
+            "policy:deny:1001": (
+                ("policy_callback", "deny", "1001"),
+                "policy callback response",
+            ),
         }
 
         for callback_data, (expected_call, expected_answer) in callback_cases.items():
@@ -299,6 +307,7 @@ class BotRouterTests(unittest.TestCase):
             "menu:health:0": ("health", "health response"),
             "menu:logs:0": ("logs", "logs response"),
             "menu:settings:0": ("settings", "settings response"),
+            "menu:blacklist:0": ("blacklist", "blacklist response"),
             "menu:help:0": ("help", "help response"),
         }
 

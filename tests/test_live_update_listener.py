@@ -35,6 +35,7 @@ class FakeChatRepository:
     def __init__(self, connection):
         self.chats = []
         self.cursor = 0
+        self.catch_up_chats = []
         self.updated_cursors = []
 
     def ensure_chat(self, account_id, chat_id, title="", chat_type=""):
@@ -46,6 +47,9 @@ class FakeChatRepository:
     def update_ingestion_cursor(self, account_id, chat_id, last_message_id, ingested_at):
         self.cursor = last_message_id
         self.updated_cursors.append((account_id, chat_id, last_message_id, ingested_at))
+
+    def list_catch_up_chats(self, account_id):
+        return self.catch_up_chats
 
 
 class FakeMessageRepository:
@@ -60,6 +64,7 @@ class FakeListenerClient:
     def __init__(self):
         self.handler = None
         self.calls = []
+        self.new_messages = {}
 
     async def listen_new_messages(self, handler):
         self.handler = handler
@@ -70,6 +75,18 @@ class FakeListenerClient:
 
     async def close(self):
         self.calls.append("close")
+
+    async def iter_new_messages(self, chat_id, *, min_id=None, limit=None):
+        self.calls.append(("iter_new_messages", chat_id, min_id, limit))
+        messages = [
+            message
+            for message in self.new_messages.get(chat_id, [])
+            if min_id is None or int(getattr(message, "id", 0)) > min_id
+        ]
+        if limit is not None:
+            messages = messages[:limit]
+        for message in messages:
+            yield message
 
 
 class FakeBackfillJobRunner:
@@ -159,6 +176,105 @@ class LiveUpdateListenerTests(unittest.TestCase):
         self.assertGreaterEqual(len(runner.calls), 2)
         self.assertTrue(all(call["client"] is client for call in runner.calls))
 
+    def test_run_forever_catches_up_known_chats_after_registering_handler(self):
+        client = FakeListenerClient()
+        client.new_messages[1001] = [RawMessage(51, text="missed")]
+        listener, repositories = make_listener(client, startup_catch_up_limit=100)
+        repositories.chat.catch_up_chats = [
+            {
+                "chat_id": 1001,
+                "title": "Alice",
+                "chat_type": "private",
+                "last_ingested_message_id": 50,
+            }
+        ]
+
+        asyncio.run(listener.run_forever())
+
+        self.assertIsNotNone(client.handler)
+        self.assertLess(client.calls.index("listen"), client.calls.index(("iter_new_messages", 1001, 50, 100)))
+        self.assertEqual(repositories.messages.messages[-1].telegram_message_id, 51)
+        self.assertEqual(repositories.messages.messages[-1].text, "missed")
+        self.assertEqual(repositories.chat.updated_cursors[-1][2], 51)
+
+    def test_startup_catch_up_fetches_multiple_batches_until_current(self):
+        client = FakeListenerClient()
+        client.new_messages[1001] = [
+            RawMessage(51, text="missed one"),
+            RawMessage(52, text="missed two"),
+        ]
+        listener, repositories = make_listener(client, startup_catch_up_limit=1)
+        repositories.chat.catch_up_chats = [
+            {
+                "chat_id": 1001,
+                "title": "Alice",
+                "chat_type": "private",
+                "last_ingested_message_id": 50,
+            }
+        ]
+
+        asyncio.run(listener.run_forever())
+
+        self.assertIn(("iter_new_messages", 1001, 50, 1), client.calls)
+        self.assertIn(("iter_new_messages", 1001, 51, 1), client.calls)
+        self.assertIn(("iter_new_messages", 1001, 52, 1), client.calls)
+        self.assertEqual([message.telegram_message_id for message in repositories.messages.messages], [51, 52])
+        self.assertEqual(repositories.chat.updated_cursors[-1][2], 52)
+
+    def test_startup_catch_up_skips_chats_without_cursor_and_denied_chats(self):
+        client = FakeListenerClient()
+        listener, repositories = make_listener(
+            client,
+            policy=ChatIngestionPolicy(denied_chat_ids=frozenset({1002})),
+        )
+        repositories.chat.catch_up_chats = [
+            {
+                "chat_id": 1001,
+                "title": "New",
+                "chat_type": "private",
+                "last_ingested_message_id": 0,
+            },
+            {
+                "chat_id": 1002,
+                "title": "Denied",
+                "chat_type": "private",
+                "last_ingested_message_id": 10,
+            },
+        ]
+
+        asyncio.run(listener.run_forever())
+
+        self.assertNotIn(("iter_new_messages", 1001, 0, None), client.calls)
+        self.assertNotIn(("iter_new_messages", 1002, 10, None), client.calls)
+        self.assertEqual(repositories.messages.messages, [])
+        self.assertEqual(repositories.chat.updated_cursors, [])
+
+    def test_startup_catch_up_uses_latest_policy_provider(self):
+        client = FakeListenerClient()
+        client.new_messages[-100777] = [
+            RawMessage(11, chat_id=-100777, text="channel update"),
+        ]
+        def policy_provider():
+            return ChatIngestionPolicy(allowed_channel_ids=frozenset({-100777}))
+
+        listener, repositories = make_listener(
+            client,
+            policy=ChatIngestionPolicy(denied_chat_ids=frozenset({-100777})),
+            policy_provider=policy_provider,
+        )
+        repositories.chat.catch_up_chats = [
+            {
+                "chat_id": -100777,
+                "title": "Channel",
+                "chat_type": "channel",
+                "last_ingested_message_id": 10,
+            }
+        ]
+
+        asyncio.run(listener.run_forever())
+
+        self.assertEqual(repositories.messages.messages[-1].telegram_message_id, 11)
+
     def test_handler_saves_accepted_update_and_advances_cursor(self):
         client = FakeListenerClient()
         listener, repositories = make_listener(client)
@@ -246,9 +362,11 @@ class LiveUpdateListenerTests(unittest.TestCase):
 def make_listener(
     client,
     policy=None,
+    policy_provider=None,
     backfill_job_runner=None,
     backfill_batch_size=25,
     backfill_poll_interval_seconds=10,
+    startup_catch_up_limit=None,
 ):
     connection_factory = FakeConnectionFactory()
     repositories = RepositoryBundle(
@@ -261,6 +379,7 @@ def make_listener(
         connection_factory=connection_factory,
         client_factory=lambda: client,
         policy=policy or ChatIngestionPolicy(),
+        policy_provider=policy_provider,
         account_repository_factory=lambda connection: repositories.account,
         chat_repository_factory=lambda connection: repositories.chat,
         message_repository_factory=lambda connection: repositories.messages,
@@ -270,6 +389,7 @@ def make_listener(
         backfill_job_runner=backfill_job_runner,
         backfill_batch_size=backfill_batch_size,
         backfill_poll_interval_seconds=backfill_poll_interval_seconds,
+        startup_catch_up_limit=startup_catch_up_limit,
     )
     return listener, repositories
 

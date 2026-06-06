@@ -164,10 +164,12 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["account_id"], "owner")
         self.assertEqual(captured["policy"].allowed_channel_ids, frozenset({-100111}))
         self.assertEqual(captured["policy"].denied_chat_ids, frozenset({1002}))
+        self.assertTrue(callable(captured["policy_provider"]))
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
         self.assertEqual(captured["backfill_job_runner"].__class__.__name__, "ConnectionScopedBackfillJobRunner")
         self.assertEqual(captured["backfill_batch_size"], 25)
+        self.assertEqual(captured["startup_catch_up_limit"], 100)
         self.assertEqual(factory.opened, 0)
 
     def test_run_worker_once_builds_worker_with_repositories_and_settings(self):
@@ -250,6 +252,7 @@ class AppContextTests(unittest.TestCase):
         )
         self.assertEqual(captured["router"].services.backfill_job_repository.__class__.__name__, "BackfillJobRepository")
         self.assertEqual(captured["router"].services.chat_query_repository.__class__.__name__, "ChatQueryRepository")
+        self.assertEqual(captured["router"].services.chat_policy_repository.__class__.__name__, "ChatPolicyRepository")
         self.assertEqual(captured["router"].services.settings_snapshot.lm_studio_model, "local-model")
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
         self.assertEqual(captured["state_repository"].__class__.__name__, "BotRuntimeStateRepository")

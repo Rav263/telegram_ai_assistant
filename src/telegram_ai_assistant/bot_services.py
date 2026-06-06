@@ -5,7 +5,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .domain import BackfillChatChoice, BackfillJobRecord, BackfillJobSummary, ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
+from .domain import (
+    BackfillChatChoice,
+    BackfillJobRecord,
+    BackfillJobSummary,
+    ChatPolicyChoice,
+    ExtractedItem,
+    ItemStatus,
+    ItemType,
+    ReviewEntry,
+    RuntimeEvent,
+)
 from .health import HealthReport
 
 
@@ -59,6 +69,7 @@ class BotServices:
         summary_query_repository: Any | None = None,
         review_repository: Any | None = None,
         chat_query_repository: Any | None = None,
+        chat_policy_repository: Any | None = None,
         backfill_job_query_repository: Any | None = None,
         backfill_job_repository: Any | None = None,
         settings_snapshot: Any | None = None,
@@ -71,6 +82,7 @@ class BotServices:
         self.summary_query_repository = summary_query_repository
         self.review_repository = review_repository
         self.chat_query_repository = chat_query_repository
+        self.chat_policy_repository = chat_policy_repository
         self.backfill_job_query_repository = backfill_job_query_repository
         self.backfill_job_repository = backfill_job_repository
         self.settings_snapshot = settings_snapshot
@@ -134,7 +146,7 @@ class BotServices:
     def blacklist(self) -> BotResponse:
         if self.settings_snapshot is None:
             return BotResponse("Settings service is not configured.", _main_menu_markup())
-        return BotResponse(_format_blacklist(self.settings_snapshot), _main_menu_markup())
+        return self._policy_chat_page(page=0)
 
     def settings(self) -> BotResponse:
         if self.settings_snapshot is None:
@@ -168,6 +180,28 @@ class BotServices:
             }
         )
         return f"Status updated: {status.value}"
+
+    def handle_policy_callback(self, action: str, target_id: str) -> BotResponse | str:
+        if action == "p":
+            page = _parse_int(target_id)
+            if page is None or page < 0:
+                return "Invalid policy page."
+            return self._policy_chat_page(page=page)
+
+        chat_id = _parse_int(target_id)
+        if chat_id is None:
+            return "Invalid chat id."
+        if self.chat_policy_repository is None:
+            return "Chat policy service is not configured."
+        if action == "allow":
+            self.chat_policy_repository.allow_chat(chat_id)
+        elif action == "deny":
+            self.chat_policy_repository.deny_chat(chat_id)
+        elif action == "reset":
+            self.chat_policy_repository.reset_chat(chat_id)
+        else:
+            return "Unknown policy action."
+        return self._policy_chat_page(page=0, prefix="Policy updated.")
 
     def handle_backfill_callback(self, action: str, target_id: str) -> str:
         if action in {"30d", "90d"}:
@@ -275,6 +309,15 @@ class BotServices:
                 break
         return None
 
+    def _policy_chat_page(self, *, page: int, prefix: str = "") -> BotResponse:
+        chats = []
+        if self.chat_query_repository is not None:
+            lister = getattr(self.chat_query_repository, "list_policy_chats", None)
+            if lister is not None:
+                chats = lister(page=page, page_size=BACKFILL_CHAT_PAGE_SIZE)
+        text = _format_blacklist(self.settings_snapshot, chats=chats, page=page, prefix=prefix)
+        return BotResponse(text, _policy_chat_page_markup(page=page, chats=chats))
+
 
 def _format_runtime_event(event: RuntimeEvent) -> str:
     metadata = _format_safe_metadata(event.metadata)
@@ -344,6 +387,9 @@ def _main_menu_markup() -> dict[str, object]:
             ],
             [
                 {"text": "Settings", "callback_data": "menu:settings:0"},
+                {"text": "Blacklist", "callback_data": "menu:blacklist:0"},
+            ],
+            [
                 {"text": "Help", "callback_data": "menu:help:0"},
             ],
         ]
@@ -639,19 +685,60 @@ def _parse_int(value: str) -> int | None:
         return None
 
 
-def _format_blacklist(settings: Any) -> str:
+def _format_blacklist(
+    settings: Any,
+    *,
+    chats: list[ChatPolicyChoice] | None = None,
+    page: int = 0,
+    prefix: str = "",
+) -> str:
     allowed = _ids_text(getattr(settings, "telegram_listener_allowed_channel_ids", ()))
     denied = _ids_text(getattr(settings, "telegram_listener_denied_chat_ids", ()))
-    return "\n".join(
+    lines = []
+    if prefix:
+        lines.append(prefix)
+    lines.extend(
         [
             "Listener policy:",
             "private/basic groups/supergroups are allowed by default",
             "broadcast channels are ignored unless allowlisted",
             f"allowed_channel_ids={allowed}",
             f"denied_chat_ids={denied}",
-            "Change policy through env values and restart the services.",
+            "Bot overrides are applied without restart.",
         ]
     )
+    if chats is None:
+        return "\n".join(lines)
+
+    lines.extend(["Policy chats:", f"Page: {page + 1}"])
+    if not chats:
+        lines.append("No known chats on this page.")
+        return "\n".join(lines)
+    for index, chat in enumerate(chats, start=1):
+        lines.append(f"{index}. {_policy_chat_display_name(chat)} [{chat.chat_type}/{chat.policy_state}]")
+    return "\n".join(lines)
+
+
+def _policy_chat_page_markup(*, page: int, chats: list[ChatPolicyChoice]) -> dict[str, object]:
+    rows = [
+        [
+            {"text": f"Deny {index}", "callback_data": f"policy:deny:{chat.chat_id}"},
+            {"text": f"Allow {index}", "callback_data": f"policy:allow:{chat.chat_id}"},
+            {"text": f"Reset {index}", "callback_data": f"policy:reset:{chat.chat_id}"},
+        ]
+        for index, chat in enumerate(chats, start=1)
+    ]
+    navigation = []
+    if page > 0:
+        navigation.append({"text": "Previous", "callback_data": f"policy:p:{page - 1}"})
+    navigation.append({"text": "Next", "callback_data": f"policy:p:{page + 1}"})
+    rows.append([{"text": "Menu", "callback_data": "menu:help:0"}])
+    rows.append(navigation)
+    return {"inline_keyboard": rows}
+
+
+def _policy_chat_display_name(chat: ChatPolicyChoice) -> str:
+    return chat.title.strip() or str(chat.chat_id)
 
 
 def _format_settings(settings: Any) -> str:

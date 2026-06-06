@@ -39,9 +39,11 @@ class LiveUpdateListener:
         now: Callable[[], datetime] | None = None,
         chat_metadata_extractor: Callable[[object], ChatMetadata] | None = None,
         message_extractor: Callable[[object], object] | None = None,
+        policy_provider: Callable[[], ChatIngestionPolicy] | None = None,
         backfill_job_runner: Any | None = None,
         backfill_batch_size: int = 25,
         backfill_poll_interval_seconds: float = 10.0,
+        startup_catch_up_limit: int | None = None,
     ):
         self.account_id = account_id
         self.connection_factory = connection_factory
@@ -54,9 +56,11 @@ class LiveUpdateListener:
         self.now = now or (lambda: datetime.now(UTC))
         self.chat_metadata_extractor = chat_metadata_extractor or extract_chat_metadata
         self.message_extractor = message_extractor or extract_event_message
+        self.policy_provider = policy_provider
         self.backfill_job_runner = backfill_job_runner
         self.backfill_batch_size = backfill_batch_size
         self.backfill_poll_interval_seconds = backfill_poll_interval_seconds
+        self.startup_catch_up_limit = startup_catch_up_limit
 
     async def run_forever(self) -> ListenerRunResult:
         client = await _resolve_client(self.client_factory())
@@ -64,6 +68,7 @@ class LiveUpdateListener:
         try:
             logger.info("live listener starting account_id=%s", self.account_id)
             await client.listen_new_messages(self.handle_update)
+            await self._run_startup_catch_up(client)
             await self._run_backfill_once(client)
             backfill_task = self._start_backfill_loop(client)
             await client.run_until_disconnected()
@@ -98,7 +103,7 @@ class LiveUpdateListener:
 
     async def handle_update(self, event: object) -> None:
         chat_metadata = self.chat_metadata_extractor(event)
-        if not self.policy.can_read(chat_metadata):
+        if not self._effective_policy().can_read(chat_metadata):
             logger.debug(
                 "skipped live update account_id=%s chat_id=%s chat_type=%s",
                 self.account_id,
@@ -108,6 +113,72 @@ class LiveUpdateListener:
             return
 
         raw_message = self.message_extractor(event)
+        message = self._save_message(raw_message, chat_metadata)
+        logger.info(
+            "saved live update account_id=%s chat_id=%s telegram_message_id=%s sender_id=%s direction=%s",
+            self.account_id,
+            chat_metadata.chat_id,
+            message.telegram_message_id,
+            message.sender_id,
+            message.direction.value,
+        )
+
+    async def _run_startup_catch_up(self, client: Any) -> None:
+        with self.connection_factory.connection() as connection:
+            chat_repository = self.chat_repository_factory(connection)
+            chats = chat_repository.list_catch_up_chats(self.account_id)
+
+        if not chats:
+            return
+
+        policy = self._effective_policy()
+        for chat in chats:
+            cursor = _chat_value(chat, "last_ingested_message_id", 0)
+            if cursor <= 0:
+                continue
+            chat_metadata = _chat_metadata_from_cursor(chat)
+            if not policy.can_read(chat_metadata):
+                logger.debug(
+                    "skipped startup catch-up account_id=%s chat_id=%s chat_type=%s",
+                    self.account_id,
+                    chat_metadata.chat_id,
+                    chat_metadata.chat_type,
+                )
+                continue
+
+            saved_count = 0
+            latest_message_id = cursor
+            while True:
+                batch_saved = 0
+                batch_latest_message_id = latest_message_id
+                async for raw_message in client.iter_new_messages(
+                    chat_metadata.chat_id,
+                    min_id=latest_message_id,
+                    limit=self.startup_catch_up_limit,
+                ):
+                    message = self._save_message(raw_message, chat_metadata)
+                    batch_latest_message_id = max(batch_latest_message_id, message.telegram_message_id)
+                    batch_saved += 1
+                    saved_count += 1
+                if batch_saved == 0 or batch_latest_message_id <= latest_message_id:
+                    break
+                latest_message_id = batch_latest_message_id
+
+            if saved_count:
+                logger.info(
+                    "startup catch-up saved messages account_id=%s chat_id=%s saved_count=%s latest_message_id=%s",
+                    self.account_id,
+                    chat_metadata.chat_id,
+                    saved_count,
+                    latest_message_id,
+                )
+
+    def _effective_policy(self) -> ChatIngestionPolicy:
+        if self.policy_provider is None:
+            return self.policy
+        return self.policy_provider()
+
+    def _save_message(self, raw_message: object, chat_metadata: ChatMetadata):
         message = self.normalizer(self.account_id, raw_message)
 
         with self.connection_factory.connection() as connection:
@@ -134,13 +205,12 @@ class LiveUpdateListener:
                 self.now(),
             )
             logger.info(
-                "saved live update account_id=%s chat_id=%s telegram_message_id=%s sender_id=%s direction=%s",
+                "advanced ingestion cursor account_id=%s chat_id=%s latest_message_id=%s",
                 self.account_id,
                 chat_metadata.chat_id,
-                message.telegram_message_id,
-                message.sender_id,
-                message.direction.value,
+                max(current_cursor, message.telegram_message_id),
             )
+        return message
 
 
 async def _resolve_client(value: Any) -> IngestionClient:
@@ -181,3 +251,21 @@ def _chat_type(chat: object, is_megagroup: bool, is_broadcast: bool) -> str:
     if "user" in class_name:
         return "private"
     return "unknown"
+
+
+def _chat_metadata_from_cursor(chat: object) -> ChatMetadata:
+    chat_id = _chat_value(chat, "chat_id", 0)
+    chat_type = str(_chat_value(chat, "chat_type", "") or "")
+    return ChatMetadata(
+        chat_id=chat_id,
+        chat_type=chat_type,
+        title=str(_chat_value(chat, "title", "") or ""),
+        is_megagroup=chat_type == "supergroup",
+        is_broadcast=chat_type in {"channel", "broadcast"},
+    )
+
+
+def _chat_value(chat: object, key: str, default: object) -> Any:
+    if isinstance(chat, dict):
+        return chat.get(key, default)
+    return getattr(chat, key, default)

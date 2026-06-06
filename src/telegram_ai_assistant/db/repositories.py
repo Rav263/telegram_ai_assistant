@@ -10,6 +10,8 @@ from telegram_ai_assistant.domain import (
     BackfillChatChoice,
     BackfillJobRecord,
     BackfillJobSummary,
+    ChatCursor,
+    ChatPolicyChoice,
     ExtractedItem,
     ItemStatus,
     ItemType,
@@ -20,6 +22,7 @@ from telegram_ai_assistant.domain import (
     SourceRef,
 )
 from telegram_ai_assistant.filtering import CandidateScoringContext
+from telegram_ai_assistant.ingestion.chat_policy import ChatIngestionPolicy
 
 
 class Cursor(Protocol):
@@ -155,6 +158,24 @@ def _backfill_chat_choice_from_row(row: object) -> BackfillChatChoice:
         chat_id=int(_row_value(row, "chat_id", 0)),
         title=str(_row_value(row, "title", 1) or ""),
         chat_type=str(_row_value(row, "chat_type", 2) or ""),
+    )
+
+
+def _chat_cursor_from_row(row: object) -> ChatCursor:
+    return ChatCursor(
+        chat_id=int(_row_value(row, "chat_id", 0)),
+        title=str(_row_value(row, "title", 1) or ""),
+        chat_type=str(_row_value(row, "chat_type", 2) or ""),
+        last_ingested_message_id=int(_row_value(row, "last_ingested_message_id", 3) or 0),
+    )
+
+
+def _chat_policy_choice_from_row(row: object) -> ChatPolicyChoice:
+    return ChatPolicyChoice(
+        chat_id=int(_row_value(row, "chat_id", 0)),
+        title=str(_row_value(row, "title", 1) or ""),
+        chat_type=str(_row_value(row, "chat_type", 2) or ""),
+        policy_state=str(_row_value(row, "policy_state", 3) or "default"),
     )
 
 
@@ -477,6 +498,116 @@ class ChatRepository:
         }
 
         _execute(self._connection, sql, params)
+
+    def list_catch_up_chats(self, account_id: str) -> list[ChatCursor]:
+        sql = """
+            SELECT
+                chat_id,
+                title,
+                chat_type,
+                last_ingested_message_id
+            FROM chats
+            WHERE account_id = %(account_id)s
+              AND last_ingested_message_id > 0
+            ORDER BY COALESCE(last_ingested_at, created_at), chat_id
+        """
+        rows = _fetchall(self._connection, sql, {"account_id": account_id})
+        return [_chat_cursor_from_row(row) for row in rows]
+
+
+class ChatPolicyRepository:
+    def __init__(self, connection: Connection, *, account_id: str):
+        self._connection = connection
+        self._account_id = account_id
+
+    def effective_policy(
+        self,
+        *,
+        base_allowed_channel_ids: frozenset[int] = frozenset(),
+        base_denied_chat_ids: frozenset[int] = frozenset(),
+    ) -> ChatIngestionPolicy:
+        allowed_channel_ids, denied_chat_ids = self.effective_ids(
+            base_allowed_channel_ids=base_allowed_channel_ids,
+            base_denied_chat_ids=base_denied_chat_ids,
+        )
+        return ChatIngestionPolicy(
+            allowed_channel_ids=allowed_channel_ids,
+            denied_chat_ids=denied_chat_ids,
+        )
+
+    def effective_ids(
+        self,
+        *,
+        base_allowed_channel_ids: frozenset[int] = frozenset(),
+        base_denied_chat_ids: frozenset[int] = frozenset(),
+    ) -> tuple[frozenset[int], frozenset[int]]:
+        sql = """
+            SELECT
+                chat_id,
+                policy_state
+            FROM chat_policy_overrides
+            WHERE account_id = %(account_id)s
+        """
+        rows = _fetchall(self._connection, sql, {"account_id": self._account_id})
+        allowed = set(base_allowed_channel_ids)
+        denied = set(base_denied_chat_ids)
+        for row in rows:
+            chat_id = int(_row_value(row, "chat_id", 0))
+            state = str(_row_value(row, "policy_state", 1))
+            if state == "allow":
+                allowed.add(chat_id)
+            elif state == "deny":
+                denied.add(chat_id)
+        allowed.difference_update(denied)
+        return frozenset(allowed), frozenset(denied)
+
+    def allow_chat(self, chat_id: int) -> None:
+        self._set_policy(chat_id=chat_id, policy_state="allow")
+
+    def deny_chat(self, chat_id: int) -> None:
+        self._set_policy(chat_id=chat_id, policy_state="deny")
+
+    def reset_chat(self, chat_id: int) -> None:
+        sql = """
+            DELETE FROM chat_policy_overrides
+            WHERE account_id = %(account_id)s
+              AND chat_id = %(chat_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "chat_id": chat_id,
+            },
+        )
+
+    def _set_policy(self, *, chat_id: int, policy_state: str) -> None:
+        sql = """
+            INSERT INTO chat_policy_overrides (
+                account_id,
+                chat_id,
+                policy_state
+            )
+            VALUES (
+                %(account_id)s,
+                %(chat_id)s,
+                %(policy_state)s
+            )
+            ON CONFLICT (account_id, chat_id)
+            DO UPDATE SET
+                policy_state = EXCLUDED.policy_state,
+                updated_at = NOW()
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "chat_id": chat_id,
+                "policy_state": policy_state,
+            },
+        )
 
 
 class MessageRepository:
@@ -1147,14 +1278,17 @@ class ChatQueryRepository:
         account_id: str,
         allowed_channel_ids: frozenset[int] = frozenset(),
         denied_chat_ids: frozenset[int] = frozenset(),
+        policy_repository: ChatPolicyRepository | None = None,
     ):
         self._connection = connection
         self._account_id = account_id
         self._allowed_channel_ids = allowed_channel_ids
         self._denied_chat_ids = denied_chat_ids
+        self._policy_repository = policy_repository
 
     def list_backfill_chats(self, *, page: int, page_size: int = 6) -> list[BackfillChatChoice]:
         offset = max(page, 0) * page_size
+        allowed_channel_ids, denied_chat_ids = self._effective_policy_ids()
         sql = """
             SELECT
                 chat_id,
@@ -1177,8 +1311,8 @@ class ChatQueryRepository:
             sql,
             {
                 "account_id": self._account_id,
-                "allowed_channel_ids": sorted(self._allowed_channel_ids),
-                "denied_chat_ids": sorted(self._denied_chat_ids),
+                "allowed_channel_ids": sorted(allowed_channel_ids),
+                "denied_chat_ids": sorted(denied_chat_ids),
                 "limit": page_size,
                 "offset": offset,
             },
@@ -1186,6 +1320,7 @@ class ChatQueryRepository:
         return [_backfill_chat_choice_from_row(row) for row in rows]
 
     def get_backfill_chat(self, chat_id: int) -> BackfillChatChoice | None:
+        allowed_channel_ids, denied_chat_ids = self._effective_policy_ids()
         sql = """
             SELECT
                 chat_id,
@@ -1207,11 +1342,47 @@ class ChatQueryRepository:
             {
                 "account_id": self._account_id,
                 "chat_id": chat_id,
-                "allowed_channel_ids": sorted(self._allowed_channel_ids),
-                "denied_chat_ids": sorted(self._denied_chat_ids),
+                "allowed_channel_ids": sorted(allowed_channel_ids),
+                "denied_chat_ids": sorted(denied_chat_ids),
             },
         )
         return None if row is None else _backfill_chat_choice_from_row(row)
+
+    def list_policy_chats(self, *, page: int, page_size: int = 6) -> list[ChatPolicyChoice]:
+        offset = max(page, 0) * page_size
+        sql = """
+            SELECT
+                c.chat_id,
+                c.title,
+                c.chat_type,
+                p.policy_state
+            FROM chats c
+            LEFT JOIN chat_policy_overrides p
+              ON p.account_id = c.account_id
+             AND p.chat_id = c.chat_id
+            WHERE c.account_id = %(account_id)s
+            ORDER BY COALESCE(NULLIF(c.title, ''), c.chat_id::TEXT), c.chat_id
+            LIMIT %(limit)s
+            OFFSET %(offset)s
+        """
+        rows = _fetchall(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "limit": page_size,
+                "offset": offset,
+            },
+        )
+        return [_chat_policy_choice_from_row(row) for row in rows]
+
+    def _effective_policy_ids(self) -> tuple[frozenset[int], frozenset[int]]:
+        if self._policy_repository is None:
+            return self._allowed_channel_ids, self._denied_chat_ids
+        return self._policy_repository.effective_ids(
+            base_allowed_channel_ids=self._allowed_channel_ids,
+            base_denied_chat_ids=self._denied_chat_ids,
+        )
 
 
 class BackfillJobRepository(BackfillJobQueryRepository):

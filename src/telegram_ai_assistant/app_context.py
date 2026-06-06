@@ -15,6 +15,7 @@ from .db.repositories import (
     BackfillJobRepository,
     BotRuntimeStateRepository,
     CandidateRepository,
+    ChatPolicyRepository,
     ChatQueryRepository,
     ItemRepository,
     ItemQueryRepository,
@@ -149,14 +150,16 @@ class AppContext:
         return await backfill.run_once()
 
     async def run_listener_forever(self):
+        base_policy = ChatIngestionPolicy(
+            allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
+            denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
+        )
         listener = self.listener_factory(
             account_id=self.settings.telegram_ingest_account_id,
             connection_factory=self.connection_factory,
             client_factory=self.telegram_client_factory(self.settings),
-            policy=ChatIngestionPolicy(
-                allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
-                denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
-            ),
+            policy=base_policy,
+            policy_provider=lambda: self._effective_chat_policy(base_policy),
             backfill_job_runner=ConnectionScopedBackfillJobRunner(
                 connection_factory=self.connection_factory,
                 job_repository_factory=lambda connection: BackfillJobRepository(
@@ -168,8 +171,19 @@ class AppContext:
                 client_factory=None,
             ),
             backfill_batch_size=self.settings.worker_batch_size,
+            startup_catch_up_limit=self.settings.telegram_ingest_limit,
         )
         return await listener.run_forever()
+
+    def _effective_chat_policy(self, base_policy: ChatIngestionPolicy) -> ChatIngestionPolicy:
+        with self.connection_factory.connection() as connection:
+            return ChatPolicyRepository(
+                connection,
+                account_id=self.settings.telegram_ingest_account_id,
+            ).effective_policy(
+                base_allowed_channel_ids=base_policy.allowed_channel_ids,
+                base_denied_chat_ids=base_policy.denied_chat_ids,
+            )
 
     def run_worker_once(self) -> WorkerResult:
         with self.connection_factory.connection() as connection:
@@ -214,6 +228,10 @@ class AppContext:
                 connection,
                 account_id=self.settings.telegram_ingest_account_id,
             )
+            chat_policy_repository = ChatPolicyRepository(
+                connection,
+                account_id=self.settings.telegram_ingest_account_id,
+            )
             router = BotRouter(
                 access=BotAccessController(self.settings.telegram_allowed_user_id),
                 bot_api=bot_api,
@@ -232,7 +250,9 @@ class AppContext:
                         account_id=self.settings.telegram_ingest_account_id,
                         allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
                         denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
+                        policy_repository=chat_policy_repository,
                     ),
+                    chat_policy_repository=chat_policy_repository,
                     backfill_job_query_repository=backfill_job_repository,
                     backfill_job_repository=backfill_job_repository,
                     settings_snapshot=self.settings,

@@ -32,6 +32,7 @@ class DBSchemaTests(unittest.TestCase):
             "backfill_jobs",
             "bot_actions",
             "bot_runtime_state",
+            "chat_policy_overrides",
             "settings",
         )
 
@@ -185,6 +186,24 @@ class DBSchemaTests(unittest.TestCase):
         self.assertIn("create table if not exists bot_runtime_state", schema)
         self.assertRegex(schema, r"bot_name\s+text\s+primary\s+key")
         self.assertRegex(schema, r"last_update_id\s+bigint\s+not\s+null")
+
+    def test_chat_policy_overrides_store_bot_managed_listener_policy(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists chat_policy_overrides", schema)
+        self.assertRegex(schema, r"chat_id\s+bigint\s+not\s+null")
+        self.assertIn("policy_state text not null", schema)
+        self.assertIn("check (policy_state in ('allow', 'deny'))", schema)
+        self.assertIn("primary key (account_id, chat_id)", schema)
+        self.assertIn(
+            "create index if not exists idx_chat_policy_overrides_account_state on chat_policy_overrides(account_id, policy_state)",
+            schema,
+        )
 
     def test_backfill_jobs_support_persisted_bot_managed_execution(self):
         self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
