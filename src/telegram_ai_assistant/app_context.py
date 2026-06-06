@@ -10,7 +10,7 @@ from .bot_runtime import BotRuntime
 from .bot_services import BotServices
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
-from .backfill import PersistedBackfillJobRunner
+from .backfill import ConnectionScopedBackfillJobRunner
 from .db.repositories import (
     BackfillJobRepository,
     BotRuntimeStateRepository,
@@ -157,6 +157,17 @@ class AppContext:
                 allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
                 denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
             ),
+            backfill_job_runner=ConnectionScopedBackfillJobRunner(
+                connection_factory=self.connection_factory,
+                job_repository_factory=lambda connection: BackfillJobRepository(
+                    connection,
+                    account_id=self.settings.telegram_ingest_account_id,
+                ),
+                runtime_event_repository_factory=lambda connection: RuntimeEventRepository(connection),
+                backfill_service_factory=self.backfill_factory,
+                client_factory=None,
+            ),
+            backfill_batch_size=self.settings.worker_batch_size,
         )
         return await listener.run_forever()
 
@@ -179,22 +190,12 @@ class AppContext:
                 ),
                 llm_run_repository=LLMRunRepository(connection),
                 runtime_event_repository=RuntimeEventRepository(connection),
-                backfill_job_runner=PersistedBackfillJobRunner(
-                    job_repository=BackfillJobRepository(
-                        connection,
-                        account_id=self.settings.telegram_ingest_account_id,
-                    ),
-                    backfill_service_factory=self.backfill_factory,
-                    connection_factory=self.connection_factory,
-                    client_factory=self.telegram_client_factory(self.settings),
-                ),
                 item_auto_apply_threshold=self.settings.worker_item_auto_apply_threshold,
                 status_auto_apply_threshold=self.settings.worker_status_auto_apply_threshold,
             )
             return merge_worker_results(
                 worker.process_messages(limit=self.settings.worker_batch_size),
                 worker.process_candidates(limit=self.settings.worker_batch_size),
-                worker.process_backfill_jobs(limit=self.settings.worker_batch_size),
             )
 
     def run_bot_forever(self, *, stop_requested: Callable[[], bool] | None = None):

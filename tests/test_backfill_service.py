@@ -171,6 +171,36 @@ class BackfillServiceTests(unittest.TestCase):
 
         self.assertIn({"method": "close"}, client.calls)
 
+    def test_run_once_with_client_does_not_close_externally_owned_client(self):
+        start_at = datetime(2022, 1, 1, tzinfo=UTC)
+        end_at = datetime(2022, 2, 1, tzinfo=UTC)
+        client = FakeBackfillClient(
+            [RawMessage(30, "newest old message", datetime(2022, 1, 20, tzinfo=UTC))]
+        )
+        service, repositories = make_service(
+            client=client,
+            start_at=start_at,
+            end_at=end_at,
+            before_message_id=None,
+        )
+
+        result = asyncio.run(service.run_once_with_client(client))
+
+        self.assertEqual(result.saved_count, 1)
+        self.assertEqual(
+            client.calls,
+            [
+                {
+                    "chat_id": 1001,
+                    "start_at": start_at,
+                    "end_at": end_at,
+                    "before_message_id": None,
+                    "limit": 10,
+                }
+            ],
+        )
+        self.assertEqual(len(repositories.messages.messages), 1)
+
 
 class RepositoryBundle:
     def __init__(self, account, chat, messages):

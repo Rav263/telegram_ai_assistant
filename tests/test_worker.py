@@ -135,7 +135,7 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual(result, WorkerResult())
 
-    def test_process_backfill_jobs_runs_injected_runner_once(self):
+    def test_process_backfill_jobs_does_not_run_injected_runner(self):
         runner = FakeBackfillJobRunner(
             result=type(
                 "BackfillResult",
@@ -151,10 +151,8 @@ class WorkerTests(unittest.TestCase):
 
         result = worker.process_backfill_jobs(limit=25)
 
-        self.assertEqual(runner.calls, [("run_once", 25)])
-        self.assertEqual(result.backfill_jobs, 1)
-        self.assertEqual(result.backfill_saved_messages, 12)
-        self.assertEqual(result.backfill_failures, 0)
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(result, WorkerResult())
 
     def test_scores_messages_and_enqueues_broad_candidates(self):
         candidate_repository = FakeCandidateRepository()

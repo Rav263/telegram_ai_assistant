@@ -55,6 +55,13 @@ class BackfillService:
         self.message_repository_factory = message_repository_factory
 
     async def run_once(self) -> BackfillRunResult:
+        client = await _resolve_client(self.client_factory())
+        try:
+            return await self.run_once_with_client(client)
+        finally:
+            await client.close()
+
+    async def run_once_with_client(self, client: Any) -> BackfillRunResult:
         with self.connection_factory.connection() as connection:
             account_repository = self.account_repository_factory(connection)
             chat_repository = self.chat_repository_factory(connection)
@@ -63,35 +70,31 @@ class BackfillService:
             account_repository.ensure_account(self.account_id)
             chat_repository.ensure_chat(self.account_id, self.chat_id)
 
-            client = await _resolve_client(self.client_factory())
             saved_count = 0
             next_before_message_id = self.before_message_id
             oldest_sent_at: datetime | None = None
             newest_sent_at: datetime | None = None
-            try:
-                async for raw_message in client.iter_backfill_messages(
-                    self.chat_id,
-                    start_at=self.start_at,
-                    end_at=self.end_at,
-                    before_message_id=self.before_message_id,
-                    limit=self.limit,
-                ):
-                    message = self.normalizer(self.account_id, raw_message)
-                    message_repository.upsert_message(message)
-                    saved_count += 1
-                    next_before_message_id = (
-                        message.telegram_message_id
-                        if next_before_message_id is None
-                        else min(next_before_message_id, message.telegram_message_id)
-                    )
-                    oldest_sent_at = (
-                        message.sent_at if oldest_sent_at is None else min(oldest_sent_at, message.sent_at)
-                    )
-                    newest_sent_at = (
-                        message.sent_at if newest_sent_at is None else max(newest_sent_at, message.sent_at)
-                    )
-            finally:
-                await client.close()
+            async for raw_message in client.iter_backfill_messages(
+                self.chat_id,
+                start_at=self.start_at,
+                end_at=self.end_at,
+                before_message_id=self.before_message_id,
+                limit=self.limit,
+            ):
+                message = self.normalizer(self.account_id, raw_message)
+                message_repository.upsert_message(message)
+                saved_count += 1
+                next_before_message_id = (
+                    message.telegram_message_id
+                    if next_before_message_id is None
+                    else min(next_before_message_id, message.telegram_message_id)
+                )
+                oldest_sent_at = (
+                    message.sent_at if oldest_sent_at is None else min(oldest_sent_at, message.sent_at)
+                )
+                newest_sent_at = (
+                    message.sent_at if newest_sent_at is None else max(newest_sent_at, message.sent_at)
+                )
 
             return BackfillRunResult(
                 account_id=self.account_id,

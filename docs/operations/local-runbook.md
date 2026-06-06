@@ -110,6 +110,8 @@ Use `telegram-ai-assistant run listener` for live update ingestion. It listens f
 
 By default the listener reads private chats, basic groups, and supergroups. Broadcast channels are ignored unless their ids are listed in `TELEGRAM_LISTENER_ALLOWED_CHANNEL_IDS`. Any id in `TELEGRAM_LISTENER_DENIED_CHAT_IDS` is never read.
 
+app-listener executes persisted backfill jobs created from `/backfill` with the already connected Telegram user session. Do not scale `app-listener` above one replica because the Telethon session is a singleton runtime resource.
+
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run listener
 ```
@@ -118,7 +120,7 @@ Keep `run ingestor` available as cursor catch-up after the machine sleeps or the
 
 ## Worker
 
-Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, executes one persisted backfill job batch, and prints JSON counts.
+Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, and prints JSON counts.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker --once
@@ -137,7 +139,7 @@ Worker tuning variables:
 - `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
 - `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
 
-app-worker executes persisted backfill jobs created from `/backfill`. Each worker cycle claims at most one pending/running/cancel-requested job, runs one bounded read-only history batch through the same backfill service as the CLI command, updates progress, and then continues on the next cycle.
+app-worker does not open the Telegram user session for backfill. It only processes messages already saved by the listener, ingestor, or explicit backfill command.
 
 LLM failures and worker errors are recorded as sanitized runtime events. Ask the owner-only bot for `/logs` to see the latest warning/error runtime events without Telegram message text, raw prompts, bot tokens, API hashes, database URLs, or raw tracebacks.
 
@@ -175,6 +177,8 @@ Bot-managed backfill:
 - Period buttons cover `1, 5, 10, 15, 30, 90 days`.
 - The bot shows 6 chats per page with previous/next buttons.
 - Select a chat, confirm the date range, then press Start.
+- app-listener executes persisted backfill jobs with the same read-only Telegram client used for live updates.
+- Do not scale `app-listener` above one replica.
 - Use the job status and cancel buttons from the bot to inspect or request cancellation.
 - Backfill jobs do not move `last_ingested_message_id`, so live listener/ingestor cursors remain independent.
 - Failed jobs show only sanitized error type/metadata through the bot and `/logs`.
@@ -182,6 +186,8 @@ Bot-managed backfill:
 ## Backfill
 
 Use `telegram-ai-assistant run backfill` for explicit shell-driven historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch. For day presets and chat picking from Telegram, use the owner-only bot `/backfill` flow instead.
+
+Do not run manual `telegram-ai-assistant run backfill` while `app-listener` is active against the same `TELEGRAM_SESSION_PATH`; both commands would try to use the same Telethon session.
 
 Set these variables for each run:
 
