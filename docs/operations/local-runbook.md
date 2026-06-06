@@ -117,7 +117,7 @@ Keep `run ingestor` available as cursor catch-up after the machine sleeps or the
 
 ## Worker
 
-Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, and prints JSON counts.
+Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, executes one persisted backfill job batch, and prints JSON counts.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker --once
@@ -135,6 +135,8 @@ Worker tuning variables:
 - `WORKER_POLL_INTERVAL_SECONDS` controls daemon sleep, defaulting to 10.
 - `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
 - `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
+
+app-worker executes persisted backfill jobs created from `/backfill`. Each worker cycle claims at most one pending/running/cancel-requested job, runs one bounded read-only history batch through the same backfill service as the CLI command, updates progress, and then continues on the next cycle.
 
 LLM failures and worker errors are recorded as sanitized runtime events. Ask the owner-only bot for `/logs` to see the latest warning/error runtime events without Telegram message text, raw prompts, bot tokens, API hashes, database URLs, or raw tracebacks.
 
@@ -163,13 +165,22 @@ Implemented production commands:
 
 Implemented MVP operational commands:
 
-- `/backfill` shows bounded backfill presets and latest job status.
 - `/blacklist` shows listener allow/deny policy and env-based change instructions.
 - `/settings` shows non-secret runtime settings.
 
+Bot-managed backfill:
+
+- `/backfill creates persisted backfill jobs` for one selected chat and period.
+- Period buttons cover `1, 5, 10, 15, 30, 90 days`.
+- The bot shows 6 chats per page with previous/next buttons.
+- Select a chat, confirm the date range, then press Start.
+- Use the job status and cancel buttons from the bot to inspect or request cancellation.
+- Backfill jobs do not move `last_ingested_message_id`, so live listener/ingestor cursors remain independent.
+- Failed jobs show only sanitized error type/metadata through the bot and `/logs`.
+
 ## Backfill
 
-Use `telegram-ai-assistant run backfill` for explicit historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch.
+Use `telegram-ai-assistant run backfill` for explicit shell-driven historical imports by chat and date range. It reads through the same read-only Telegram adapter, normalizes and upserts messages, and exits after one batch. For day presets and chat picking from Telegram, use the owner-only bot `/backfill` flow instead.
 
 Set these variables for each run:
 

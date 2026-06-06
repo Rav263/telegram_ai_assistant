@@ -35,3 +35,4 @@
 - Added bot command suite with `/start`, `/help`, `/summary`, `/review`, `/backfill`, `/blacklist`, `/settings`, and inline menu actions.
 - Added broad Russian candidate filtering with private-chat score priority for task-like messages.
 - Added design specification for bot-managed persisted Telegram backfill jobs.
+- Added bot-managed persisted Telegram backfill jobs with chat pagination, day presets, cancellation, and worker execution.

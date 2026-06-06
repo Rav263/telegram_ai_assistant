@@ -69,6 +69,16 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("docker compose run --rm app-listener telegram-ai-assistant migrate", text)
         self.assertIn("docker compose run --rm app-listener telegram-ai-assistant health", text)
 
+    def test_local_runbook_documents_bot_managed_backfill_jobs(self):
+        text = (ROOT / "docs/operations/local-runbook.md").read_text()
+
+        self.assertIn("/backfill creates persisted backfill jobs", text)
+        self.assertIn("1, 5, 10, 15, 30, 90 days", text)
+        self.assertIn("6 chats per page", text)
+        self.assertIn("app-worker executes persisted backfill jobs", text)
+        self.assertIn("Backfill jobs do not move `last_ingested_message_id`", text)
+        self.assertIn("~/.telegram/telegram_ai_assistant/postgres", text)
+
 
 if __name__ == "__main__":
     unittest.main()
