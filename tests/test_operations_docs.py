@@ -75,7 +75,11 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("/backfill creates persisted backfill jobs", text)
         self.assertIn("1, 5, 10, 15, 30, 90 days", text)
         self.assertIn("6 chats per page", text)
-        self.assertIn("app-worker executes persisted backfill jobs", text)
+        self.assertIn("app-listener executes persisted backfill jobs", text)
+        self.assertIn("Do not scale `app-listener` above one replica", text)
+        self.assertIn("app-worker does not open the Telegram user session for backfill", text)
+        self.assertIn("Do not run manual `telegram-ai-assistant run backfill` while `app-listener` is active", text)
+        self.assertNotIn("app-worker executes persisted backfill jobs", text)
         self.assertIn("Backfill jobs do not move `last_ingested_message_id`", text)
         self.assertIn("~/.telegram/telegram_ai_assistant/postgres", text)
 
