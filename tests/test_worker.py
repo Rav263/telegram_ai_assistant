@@ -4,7 +4,7 @@ import unittest
 from telegram_ai_assistant.domain import ExtractedItem, ItemType, Message, MessageDirection, SourceRef
 from telegram_ai_assistant.filtering import CandidateReason, CandidateScore, CandidateScoringContext
 from telegram_ai_assistant.llm_client import LMStudioError
-from telegram_ai_assistant.worker import Worker
+from telegram_ai_assistant.worker import Worker, WorkerResult
 
 
 def make_message(text: str, telegram_message_id: int = 200) -> Message:
@@ -111,6 +111,16 @@ class FakeRuntimeEventRepository:
         self.events.append(kwargs)
 
 
+class FakeBackfillJobRunner:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def run_once(self, *, limit):
+        self.calls.append(("run_once", limit))
+        return self.result
+
+
 class ExtractionResult:
     def __init__(self, items=(), status_changes=()):
         self.items = tuple(items)
@@ -118,6 +128,34 @@ class ExtractionResult:
 
 
 class WorkerTests(unittest.TestCase):
+    def test_process_backfill_jobs_is_noop_without_runner(self):
+        worker = Worker()
+
+        result = worker.process_backfill_jobs(limit=10)
+
+        self.assertEqual(result, WorkerResult())
+
+    def test_process_backfill_jobs_runs_injected_runner_once(self):
+        runner = FakeBackfillJobRunner(
+            result=type(
+                "BackfillResult",
+                (),
+                {
+                    "backfill_jobs": 1,
+                    "saved_messages": 12,
+                    "failures": 0,
+                },
+            )()
+        )
+        worker = Worker(backfill_job_runner=runner)
+
+        result = worker.process_backfill_jobs(limit=25)
+
+        self.assertEqual(runner.calls, [("run_once", 25)])
+        self.assertEqual(result.backfill_jobs, 1)
+        self.assertEqual(result.backfill_saved_messages, 12)
+        self.assertEqual(result.backfill_failures, 0)
+
     def test_scores_messages_and_enqueues_broad_candidates(self):
         candidate_repository = FakeCandidateRepository()
         worker = Worker(

@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
+import inspect
 from typing import Any
+
+from .ingestion.backfill import BackfillService
+
+
+SAFE_BACKFILL_FAILURE_METADATA_KEYS = (
+    "endpoint_scheme",
+    "endpoint_host",
+    "endpoint_path",
+    "http_status",
+    "transport_error_type",
+    "timeout_seconds",
+)
 
 
 class BackfillStatus(StrEnum):
@@ -71,6 +85,15 @@ class BackfillRunResult:
     fetched_count: int
 
 
+@dataclass(frozen=True)
+class PersistedBackfillRunResult:
+    backfill_jobs: int = 0
+    saved_messages: int = 0
+    failures: int = 0
+    job_id: int | None = None
+    status: str = ""
+
+
 class BackfillRunner:
     def __init__(
         self,
@@ -135,3 +158,101 @@ class BackfillRunner:
         method = getattr(self.job_repository, method_name, None)
         if method is not None:
             method(*args)
+
+
+class PersistedBackfillJobRunner:
+    def __init__(
+        self,
+        *,
+        job_repository: Any,
+        connection_factory: Any,
+        client_factory: Any,
+        backfill_service_factory: Any = BackfillService,
+        **service_kwargs: Any,
+    ):
+        self.job_repository = job_repository
+        self.connection_factory = connection_factory
+        self.client_factory = client_factory
+        self.backfill_service_factory = backfill_service_factory
+        self.service_kwargs = dict(service_kwargs)
+
+    def run_once(self, *, limit: int) -> PersistedBackfillRunResult:
+        job = self.job_repository.claim_next_job()
+        if job is None:
+            return PersistedBackfillRunResult()
+        if job.status == "cancel_requested":
+            self.job_repository.mark_cancelled(job.backfill_job_id)
+            return PersistedBackfillRunResult(backfill_jobs=1, job_id=job.backfill_job_id, status="cancelled")
+
+        try:
+            service_result = self._run_backfill_service(job, limit=limit)
+        except Exception as exc:
+            self.job_repository.mark_failed(
+                job.backfill_job_id,
+                error_type=type(exc).__name__,
+                metadata=_safe_backfill_failure_metadata(exc),
+            )
+            return PersistedBackfillRunResult(
+                backfill_jobs=1,
+                failures=1,
+                job_id=job.backfill_job_id,
+                status="failed",
+            )
+
+        saved_count = int(getattr(service_result, "saved_count", 0) or 0)
+        next_before_message_id = getattr(service_result, "next_before_message_id", None)
+        if saved_count <= 0:
+            self.job_repository.mark_completed(job.backfill_job_id)
+            return PersistedBackfillRunResult(
+                backfill_jobs=1,
+                saved_messages=0,
+                job_id=job.backfill_job_id,
+                status="completed",
+            )
+
+        self.job_repository.record_progress(
+            backfill_job_id=job.backfill_job_id,
+            saved_count=saved_count,
+            next_before_message_id=next_before_message_id,
+        )
+        if next_before_message_id is None:
+            self.job_repository.mark_completed(job.backfill_job_id)
+            status = "completed"
+        else:
+            status = "running"
+        return PersistedBackfillRunResult(
+            backfill_jobs=1,
+            saved_messages=saved_count,
+            job_id=job.backfill_job_id,
+            status=status,
+        )
+
+    def _run_backfill_service(self, job: Any, *, limit: int) -> Any:
+        service = self.backfill_service_factory(
+            account_id=job.account_id,
+            chat_id=job.chat_id,
+            start_at=job.from_date,
+            end_at=job.to_date,
+            before_message_id=job.next_before_message_id,
+            limit=limit,
+            connection_factory=self.connection_factory,
+            client_factory=self.client_factory,
+            **self.service_kwargs,
+        )
+        return _run_maybe_awaitable(service.run_once())
+
+
+def _run_maybe_awaitable(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return asyncio.run(value)
+    return value
+
+
+def _safe_backfill_failure_metadata(error: BaseException) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    safe_metadata = getattr(error, "safe_metadata", {})
+    if isinstance(safe_metadata, dict):
+        for key in SAFE_BACKFILL_FAILURE_METADATA_KEYS:
+            if key in safe_metadata:
+                metadata[key] = safe_metadata[key]
+    return metadata

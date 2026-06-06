@@ -38,6 +38,9 @@ class WorkerResult:
     review_items: int = 0
     review_status_changes: int = 0
     failures: int = 0
+    backfill_jobs: int = 0
+    backfill_saved_messages: int = 0
+    backfill_failures: int = 0
 
 
 class Worker:
@@ -51,6 +54,7 @@ class Worker:
         review_repository: Any | None = None,
         llm_run_repository: Any | None = None,
         runtime_event_repository: Any | None = None,
+        backfill_job_runner: Any | None = None,
         scorer: Callable[..., Any] = score_message,
         item_auto_apply_threshold: float = 0.8,
         status_auto_apply_threshold: float = 0.8,
@@ -62,6 +66,7 @@ class Worker:
         self.review_repository = review_repository
         self.llm_run_repository = llm_run_repository
         self.runtime_event_repository = runtime_event_repository
+        self.backfill_job_runner = backfill_job_runner
         self.scorer = scorer
         self.item_auto_apply_threshold = item_auto_apply_threshold
         self.status_auto_apply_threshold = status_auto_apply_threshold
@@ -147,6 +152,16 @@ class Worker:
             saved_items=saved_items,
             review_items=review_items,
             review_status_changes=review_status_changes,
+        )
+
+    def process_backfill_jobs(self, *, limit: int) -> WorkerResult:
+        if self.backfill_job_runner is None:
+            return WorkerResult()
+        result = self.backfill_job_runner.run_once(limit=limit)
+        return WorkerResult(
+            backfill_jobs=int(getattr(result, "backfill_jobs", 0) or 0),
+            backfill_saved_messages=int(getattr(result, "saved_messages", 0) or 0),
+            backfill_failures=int(getattr(result, "failures", 0) or 0),
         )
 
     def _call_optional(self, target: Any, method_name: str, *args: Any) -> None:

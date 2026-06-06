@@ -2,7 +2,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import unittest
 
-from telegram_ai_assistant.backfill import BackfillJob, BackfillRunner, BackfillStatus
+from telegram_ai_assistant.backfill import BackfillJob, BackfillRunner, BackfillStatus, PersistedBackfillJobRunner
+from telegram_ai_assistant.domain import BackfillJobRecord
 
 
 class FakeBackfillJobRepository:
@@ -59,6 +60,181 @@ class FakeMessageRepository:
 
     def save_messages(self, messages) -> None:
         self.saved_batches.append(tuple(messages))
+
+
+def make_persisted_job(
+    *,
+    status: str = "running",
+    next_before_message_id: int | None = 450,
+) -> BackfillJobRecord:
+    now = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+    return BackfillJobRecord(
+        backfill_job_id=7,
+        account_id="main",
+        chat_id=1001,
+        chat_title="Alice",
+        status=status,
+        from_date=datetime(2026, 5, 7, 9, 0, tzinfo=UTC),
+        to_date=now,
+        next_before_message_id=next_before_message_id,
+        saved_count=10,
+        last_error_type="",
+        last_error_metadata={},
+        created_at=now,
+        started_at=now,
+        finished_at=None,
+        updated_at=now,
+    )
+
+
+class FakePersistedBackfillJobRepository:
+    def __init__(self, job=None):
+        self.job = job
+        self.progress = []
+        self.completed = []
+        self.cancelled = []
+        self.failed = []
+        self.claims = 0
+
+    def claim_next_job(self):
+        self.claims += 1
+        return self.job
+
+    def record_progress(self, *, backfill_job_id, saved_count, next_before_message_id):
+        self.progress.append(
+            {
+                "backfill_job_id": backfill_job_id,
+                "saved_count": saved_count,
+                "next_before_message_id": next_before_message_id,
+            }
+        )
+
+    def mark_completed(self, backfill_job_id):
+        self.completed.append(backfill_job_id)
+
+    def mark_cancelled(self, backfill_job_id):
+        self.cancelled.append(backfill_job_id)
+
+    def mark_failed(self, backfill_job_id, *, error_type, metadata):
+        self.failed.append(
+            {
+                "backfill_job_id": backfill_job_id,
+                "error_type": error_type,
+                "metadata": metadata,
+            }
+        )
+
+
+class FakeBackfillService:
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        FakeBackfillService.instances.append(self)
+
+    async def run_once(self):
+        return self.kwargs["result"]
+
+
+class FailingBackfillService:
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        FailingBackfillService.instances.append(self)
+
+    async def run_once(self):
+        error = RuntimeError("raw private Telegram text")
+        error.safe_metadata = {"endpoint_host": "localhost", "raw_message": "secret"}
+        raise error
+
+
+class PersistedBackfillJobRunnerTests(unittest.TestCase):
+    def setUp(self):
+        FakeBackfillService.instances = []
+        FailingBackfillService.instances = []
+
+    def test_returns_idle_when_no_job_is_claimed(self):
+        jobs = FakePersistedBackfillJobRepository(job=None)
+
+        result = PersistedBackfillJobRunner(
+            job_repository=jobs,
+            backfill_service_factory=FakeBackfillService,
+            connection_factory="connection-factory",
+            client_factory="client-factory",
+        ).run_once(limit=100)
+
+        self.assertEqual(result.backfill_jobs, 0)
+        self.assertEqual(result.saved_messages, 0)
+        self.assertEqual(FakeBackfillService.instances, [])
+
+    def test_cancel_requested_job_is_cancelled_without_opening_telegram(self):
+        jobs = FakePersistedBackfillJobRepository(job=make_persisted_job(status="cancel_requested"))
+
+        result = PersistedBackfillJobRunner(
+            job_repository=jobs,
+            backfill_service_factory=FakeBackfillService,
+            connection_factory="connection-factory",
+            client_factory="client-factory",
+        ).run_once(limit=100)
+
+        self.assertEqual(result.backfill_jobs, 1)
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(jobs.cancelled, [7])
+        self.assertEqual(FakeBackfillService.instances, [])
+
+    def test_runs_one_batch_and_records_progress_cursor(self):
+        job = make_persisted_job(next_before_message_id=450)
+        service_result = SimpleNamespace(saved_count=12, next_before_message_id=400)
+        jobs = FakePersistedBackfillJobRepository(job=job)
+
+        result = PersistedBackfillJobRunner(
+            job_repository=jobs,
+            backfill_service_factory=FakeBackfillService,
+            connection_factory="connection-factory",
+            client_factory="client-factory",
+            result=service_result,
+        ).run_once(limit=100)
+
+        self.assertEqual(result.backfill_jobs, 1)
+        self.assertEqual(result.saved_messages, 12)
+        self.assertEqual(result.status, "running")
+        self.assertEqual(jobs.progress, [{"backfill_job_id": 7, "saved_count": 12, "next_before_message_id": 400}])
+        self.assertEqual(jobs.completed, [])
+        self.assertEqual(FakeBackfillService.instances[0].kwargs["chat_id"], 1001)
+        self.assertEqual(FakeBackfillService.instances[0].kwargs["before_message_id"], 450)
+        self.assertEqual(FakeBackfillService.instances[0].kwargs["limit"], 100)
+
+    def test_empty_batch_marks_job_completed(self):
+        service_result = SimpleNamespace(saved_count=0, next_before_message_id=450)
+        jobs = FakePersistedBackfillJobRepository(job=make_persisted_job(next_before_message_id=450))
+
+        result = PersistedBackfillJobRunner(
+            job_repository=jobs,
+            backfill_service_factory=FakeBackfillService,
+            connection_factory="connection-factory",
+            client_factory="client-factory",
+            result=service_result,
+        ).run_once(limit=100)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(jobs.completed, [7])
+        self.assertEqual(jobs.progress, [])
+
+    def test_failures_are_marked_with_sanitized_metadata(self):
+        jobs = FakePersistedBackfillJobRepository(job=make_persisted_job())
+
+        result = PersistedBackfillJobRunner(
+            job_repository=jobs,
+            backfill_service_factory=FailingBackfillService,
+            connection_factory="connection-factory",
+            client_factory="client-factory",
+        ).run_once(limit=100)
+
+        self.assertEqual(result.failures, 1)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(jobs.failed[0]["error_type"], "RuntimeError")
+        self.assertEqual(jobs.failed[0]["metadata"], {"endpoint_host": "localhost"})
 
 
 class BackfillJobTests(unittest.TestCase):
