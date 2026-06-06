@@ -17,10 +17,12 @@ class TelegramBotApi:
         token: str,
         transport=None,
         base_url: str = "https://api.telegram.org",
+        proxy_url: str = "",
     ):
         self.token = token
-        self.transport = transport or _urllib_transport
         self.base_url = base_url.rstrip("/")
+        self.proxy_url = proxy_url.strip()
+        self.transport = transport or _urllib_proxy_transport(self.proxy_url)
 
     def send_message(self, *, chat_id: int, text: str, reply_markup: Mapping[str, Any] | None = None):
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
@@ -94,6 +96,27 @@ class TelegramBotApi:
         if isinstance(response, Mapping) and "result" in response:
             return response["result"]
         return response
+
+
+def _urllib_proxy_transport(proxy_url: str = ""):
+    opener = None
+    if proxy_url:
+        opener = request.build_opener(
+            request.ProxyHandler(
+                {
+                    "http": proxy_url,
+                    "https": proxy_url,
+                }
+            )
+        )
+
+    def transport(url: str, body: bytes, headers: Mapping[str, str]):
+        http_request = request.Request(url, data=body, headers=dict(headers), method="POST")
+        open_request = opener.open if opener is not None else request.urlopen
+        with open_request(http_request) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    return transport
 
 
 def _urllib_transport(url: str, body: bytes, headers: Mapping[str, str]):

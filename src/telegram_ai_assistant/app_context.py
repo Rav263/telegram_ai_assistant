@@ -60,7 +60,10 @@ def default_lm_studio_client_factory(settings: Settings):
 
 
 def default_bot_api_factory(settings: Settings):
-    return TelegramBotApi(token=settings.telegram_bot_token)
+    return TelegramBotApi(
+        token=settings.telegram_bot_token,
+        proxy_url=settings.telegram_bot_proxy_url,
+    )
 
 
 @dataclass(frozen=True)

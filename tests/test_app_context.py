@@ -5,6 +5,7 @@ import unittest
 
 from telegram_ai_assistant.app_context import (
     AppContext,
+    default_bot_api_factory,
     default_lm_studio_client_factory,
     default_telegram_client_factory,
 )
@@ -265,6 +266,17 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(client.model, "local-model")
         self.assertEqual(client.max_tokens, 8192)
+
+    def test_default_bot_api_factory_uses_proxy_url(self):
+        api = default_bot_api_factory(
+            replace(
+                make_settings(),
+                telegram_bot_proxy_url="http://proxy.local:8080",
+            )
+        )
+
+        self.assertEqual(api.token, "bot")
+        self.assertEqual(api.proxy_url, "http://proxy.local:8080")
 
     def test_default_lm_studio_client_factory_uses_configured_model(self):
         settings = replace(

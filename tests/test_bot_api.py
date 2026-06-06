@@ -1,7 +1,19 @@
 import json
 import unittest
 
+from telegram_ai_assistant import bot_api
 from telegram_ai_assistant.bot_api import TelegramBotApi
+
+
+class FakeResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return False
+
+    def read(self):
+        return json.dumps({"ok": True, "result": {"id": "proxied"}}).encode("utf-8")
 
 
 class FakeTransport:
@@ -105,6 +117,39 @@ class TelegramBotApiTests(unittest.TestCase):
                 "allowed_updates": ["message", "callback_query"],
             },
         )
+
+    def test_urllib_proxy_transport_uses_http_and_https_proxy(self):
+        captured = {}
+        original_proxy_handler = bot_api.request.ProxyHandler
+        original_build_opener = bot_api.request.build_opener
+
+        class FakeProxyHandler:
+            def __init__(self, proxies):
+                captured["proxies"] = proxies
+
+        class FakeOpener:
+            def open(self, http_request):
+                captured["url"] = http_request.full_url
+                return FakeResponse()
+
+        bot_api.request.ProxyHandler = FakeProxyHandler
+        bot_api.request.build_opener = lambda handler: FakeOpener()
+        try:
+            transport = bot_api._urllib_proxy_transport("http://proxy.local:8080")
+            result = transport("https://api.telegram.org/bot-token/getUpdates", b"{}", {})
+        finally:
+            bot_api.request.ProxyHandler = original_proxy_handler
+            bot_api.request.build_opener = original_build_opener
+
+        self.assertEqual(result, {"ok": True, "result": {"id": "proxied"}})
+        self.assertEqual(
+            captured["proxies"],
+            {
+                "http": "http://proxy.local:8080",
+                "https": "http://proxy.local:8080",
+            },
+        )
+        self.assertEqual(captured["url"], "https://api.telegram.org/bot-token/getUpdates")
 
     def test_send_long_message_splits_text_and_keeps_markup_on_last_chunk(self):
         transport = FakeTransport()

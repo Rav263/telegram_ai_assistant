@@ -23,6 +23,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_api_id, 123)
         self.assertEqual(settings.telegram_api_hash, "hash")
         self.assertEqual(settings.telegram_bot_token, "bot-token")
+        self.assertEqual(settings.telegram_bot_proxy_url, "")
         self.assertEqual(settings.telegram_allowed_user_id, 456)
         self.assertEqual(settings.telegram_session_path, "/tmp/telegram.session")
         self.assertEqual(settings.telegram_ingest_account_id, "account-1")
@@ -57,6 +58,7 @@ class SettingsTests(unittest.TestCase):
             "LM_STUDIO_BASE_URL": "http://lmstudio.local:1234/v1",
             "LM_STUDIO_MODEL": "qwen2.5-7b-instruct",
             "LM_STUDIO_MAX_TOKENS": "16384",
+            "TELEGRAM_BOT_PROXY_URL": "http://proxy.local:8080",
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
             "TELEGRAM_INGEST_DEBUG_MESSAGES": "true",
@@ -83,6 +85,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.lm_studio_base_url, "http://lmstudio.local:1234/v1")
         self.assertEqual(settings.lm_studio_model, "qwen2.5-7b-instruct")
         self.assertEqual(settings.lm_studio_max_tokens, 16384)
+        self.assertEqual(settings.telegram_bot_proxy_url, "http://proxy.local:8080")
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
         self.assertTrue(settings.telegram_ingest_debug_messages)

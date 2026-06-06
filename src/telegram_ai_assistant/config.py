@@ -20,6 +20,7 @@ class Settings:
     telegram_bot_token: str
     telegram_allowed_user_id: int
     database_url: str
+    telegram_bot_proxy_url: str = ""
     telegram_session_path: str = ""
     telegram_ingest_account_id: str = ""
     telegram_ingest_chat_id: int = 0
@@ -74,6 +75,11 @@ class Settings:
             telegram_api_id=_required_int(env, "TELEGRAM_API_ID"),
             telegram_api_hash=_required(env, "TELEGRAM_API_HASH"),
             telegram_bot_token=_required(env, "TELEGRAM_BOT_TOKEN"),
+            telegram_bot_proxy_url=_optional_str(
+                env,
+                "TELEGRAM_BOT_PROXY_URL",
+                cls.telegram_bot_proxy_url,
+            ),
             telegram_allowed_user_id=_required_int(env, "TELEGRAM_ALLOWED_USER_ID"),
             telegram_session_path=_required(env, "TELEGRAM_SESSION_PATH"),
             telegram_ingest_account_id=_required(env, "TELEGRAM_INGEST_ACCOUNT_ID"),

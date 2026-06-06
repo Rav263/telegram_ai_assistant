@@ -26,6 +26,7 @@ Create a `.env` file or export these variables in the service environment:
 TELEGRAM_API_ID=123
 TELEGRAM_API_HASH=your-api-hash
 TELEGRAM_BOT_TOKEN=your-bot-token
+TELEGRAM_BOT_PROXY_URL=
 TELEGRAM_ALLOWED_USER_ID=123456
 TELEGRAM_SESSION_PATH=.local/telegram-owner.session
 TELEGRAM_INGEST_ACCOUNT_ID=owner
@@ -274,6 +275,18 @@ All three `TELEGRAM_MTPROXY_*` values must be set together. Restart `app-listene
 
 ```bash
 docker compose up -d --force-recreate app-listener
+```
+
+MTProxy is only for Telethon/MTProto traffic. The Telegram Bot API uses HTTPS, so if bot commands time out, configure an HTTP(S) proxy separately:
+
+```bash
+TELEGRAM_BOT_PROXY_URL=http://proxy.example.com:8080
+```
+
+Restart `app-bot` after changing it:
+
+```bash
+docker compose up -d --force-recreate app-bot
 ```
 
 ## Tests
