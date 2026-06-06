@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 import inspect
 import logging
 from collections.abc import Callable
@@ -37,6 +39,9 @@ class LiveUpdateListener:
         now: Callable[[], datetime] | None = None,
         chat_metadata_extractor: Callable[[object], ChatMetadata] | None = None,
         message_extractor: Callable[[object], object] | None = None,
+        backfill_job_runner: Any | None = None,
+        backfill_batch_size: int = 25,
+        backfill_poll_interval_seconds: float = 10.0,
     ):
         self.account_id = account_id
         self.connection_factory = connection_factory
@@ -49,17 +54,47 @@ class LiveUpdateListener:
         self.now = now or (lambda: datetime.now(UTC))
         self.chat_metadata_extractor = chat_metadata_extractor or extract_chat_metadata
         self.message_extractor = message_extractor or extract_event_message
+        self.backfill_job_runner = backfill_job_runner
+        self.backfill_batch_size = backfill_batch_size
+        self.backfill_poll_interval_seconds = backfill_poll_interval_seconds
 
     async def run_forever(self) -> ListenerRunResult:
         client = await _resolve_client(self.client_factory())
+        backfill_task: asyncio.Task[None] | None = None
         try:
             logger.info("live listener starting account_id=%s", self.account_id)
             await client.listen_new_messages(self.handle_update)
+            await self._run_backfill_once(client)
+            backfill_task = self._start_backfill_loop(client)
             await client.run_until_disconnected()
         finally:
+            if backfill_task is not None:
+                backfill_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await backfill_task
             await client.close()
             logger.info("live listener stopped account_id=%s", self.account_id)
         return ListenerRunResult(account_id=self.account_id, status="stopped")
+
+    def _start_backfill_loop(self, client: Any) -> asyncio.Task[None] | None:
+        if self.backfill_job_runner is None:
+            return None
+        return asyncio.create_task(self._run_backfill_loop(client))
+
+    async def _run_backfill_loop(self, client: Any) -> None:
+        while True:
+            await asyncio.sleep(self.backfill_poll_interval_seconds)
+            await self._run_backfill_once(client)
+
+    async def _run_backfill_once(self, client: Any) -> None:
+        if self.backfill_job_runner is None:
+            return
+        result = self.backfill_job_runner.run_once_with_client(
+            limit=self.backfill_batch_size,
+            client=client,
+        )
+        if inspect.isawaitable(result):
+            await result
 
     async def handle_update(self, event: object) -> None:
         chat_metadata = self.chat_metadata_extractor(event)

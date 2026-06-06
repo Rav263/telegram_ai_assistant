@@ -72,6 +72,26 @@ class FakeListenerClient:
         self.calls.append("close")
 
 
+class FakeBackfillJobRunner:
+    def __init__(self):
+        self.calls = []
+
+    async def run_once_with_client(self, *, limit, client):
+        self.calls.append({"limit": limit, "client": client})
+
+
+class WaitForBackfillPollsClient(FakeListenerClient):
+    def __init__(self, runner, target_calls):
+        super().__init__()
+        self.runner = runner
+        self.target_calls = target_calls
+
+    async def run_until_disconnected(self):
+        self.calls.append("run_until_disconnected")
+        while len(self.runner.calls) < self.target_calls:
+            await asyncio.sleep(0)
+
+
 class FakeEvent:
     def __init__(self, raw_message, chat_metadata):
         self.message = raw_message
@@ -106,6 +126,38 @@ class LiveUpdateListenerTests(unittest.TestCase):
         self.assertEqual(client.calls, ["listen", "run_until_disconnected", "close"])
         self.assertEqual(result.account_id, "owner")
         self.assertEqual(result.status, "stopped")
+
+    def test_run_forever_registers_handler_and_polls_backfill_with_shared_client(self):
+        client = FakeListenerClient()
+        runner = FakeBackfillJobRunner()
+        listener, _repositories = make_listener(
+            client,
+            backfill_job_runner=runner,
+            backfill_batch_size=25,
+        )
+
+        result = asyncio.run(listener.run_forever())
+
+        self.assertIsNotNone(client.handler)
+        self.assertEqual(client.calls, ["listen", "run_until_disconnected", "close"])
+        self.assertEqual(runner.calls, [{"limit": 25, "client": client}])
+        self.assertEqual(result.status, "stopped")
+
+    def test_run_forever_polls_backfill_periodically_while_connected(self):
+        runner = FakeBackfillJobRunner()
+        client = WaitForBackfillPollsClient(runner, target_calls=2)
+        listener, _repositories = make_listener(
+            client,
+            backfill_job_runner=runner,
+            backfill_batch_size=25,
+            backfill_poll_interval_seconds=0,
+        )
+
+        result = asyncio.run(asyncio.wait_for(listener.run_forever(), timeout=1))
+
+        self.assertEqual(result.status, "stopped")
+        self.assertGreaterEqual(len(runner.calls), 2)
+        self.assertTrue(all(call["client"] is client for call in runner.calls))
 
     def test_handler_saves_accepted_update_and_advances_cursor(self):
         client = FakeListenerClient()
@@ -191,7 +243,13 @@ class LiveUpdateListenerTests(unittest.TestCase):
         self.assertNotIn("secret text", log_output)
 
 
-def make_listener(client, policy=None):
+def make_listener(
+    client,
+    policy=None,
+    backfill_job_runner=None,
+    backfill_batch_size=25,
+    backfill_poll_interval_seconds=10,
+):
     connection_factory = FakeConnectionFactory()
     repositories = RepositoryBundle(
         account=FakeAccountRepository(connection_factory.connection_obj),
@@ -209,6 +267,9 @@ def make_listener(client, policy=None):
         now=lambda: datetime(2026, 6, 3, 11, 0, tzinfo=UTC),
         chat_metadata_extractor=lambda event: event.chat_metadata,
         message_extractor=lambda event: event.message,
+        backfill_job_runner=backfill_job_runner,
+        backfill_batch_size=backfill_batch_size,
+        backfill_poll_interval_seconds=backfill_poll_interval_seconds,
     )
     return listener, repositories
 
