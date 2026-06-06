@@ -3,6 +3,8 @@ import unittest
 
 from telegram_ai_assistant.bot_services import BotServices
 from telegram_ai_assistant.domain import (
+    BackfillChatChoice,
+    BackfillJobRecord,
     BackfillJobSummary,
     ExtractedItem,
     ItemStatus,
@@ -80,6 +82,53 @@ class FakeBackfillJobQueryRepository:
         return self.jobs[:limit]
 
 
+class FakeChatQueryRepository:
+    def __init__(self, chats=()):
+        self.chats = list(chats)
+        self.calls = []
+
+    def list_backfill_chats(self, *, page, page_size):
+        self.calls.append(("list_backfill_chats", page, page_size))
+        start = page * page_size
+        return self.chats[start : start + page_size]
+
+    def get_backfill_chat(self, chat_id):
+        self.calls.append(("get_backfill_chat", chat_id))
+        return next((chat for chat in self.chats if chat.chat_id == chat_id), None)
+
+
+class FakeBackfillJobRepository(FakeBackfillJobQueryRepository):
+    def __init__(self, jobs=()):
+        super().__init__(jobs)
+        self.created_jobs = []
+        self.cancelled_jobs = []
+
+    def create_job(self, *, chat_id, chat_title, from_date, to_date):
+        self.created_jobs.append(
+            {
+                "chat_id": chat_id,
+                "chat_title": chat_title,
+                "from_date": from_date,
+                "to_date": to_date,
+            }
+        )
+        return make_backfill_record(
+            backfill_job_id=99,
+            chat_id=chat_id,
+            chat_title=chat_title,
+            status="pending",
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+    def request_cancel(self, backfill_job_id):
+        self.cancelled_jobs.append(backfill_job_id)
+
+    def get_job(self, backfill_job_id):
+        self.calls.append(("get_job", backfill_job_id))
+        return next((job for job in self.jobs if job.backfill_job_id == backfill_job_id), None)
+
+
 class FakeSettingsSnapshot:
     telegram_ingest_account_id = "owner"
     telegram_ingest_chat_id = 123
@@ -112,6 +161,38 @@ def make_task(
         status=status,
         due_at=due_at,
         sources=(SourceRef(chat_id=100, telegram_message_id=200),),
+    )
+
+
+def make_backfill_record(
+    *,
+    backfill_job_id=7,
+    chat_id=1001,
+    chat_title="Alice",
+    status="running",
+    from_date=datetime(2026, 5, 7, 9, 0, tzinfo=UTC),
+    to_date=datetime(2026, 6, 6, 9, 0, tzinfo=UTC),
+    saved_count=12,
+    next_before_message_id=450,
+    last_error_type="",
+):
+    now = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+    return BackfillJobRecord(
+        backfill_job_id=backfill_job_id,
+        account_id="owner",
+        chat_id=chat_id,
+        chat_title=chat_title,
+        status=status,
+        from_date=from_date,
+        to_date=to_date,
+        next_before_message_id=next_before_message_id,
+        saved_count=saved_count,
+        last_error_type=last_error_type,
+        last_error_metadata={},
+        created_at=now,
+        started_at=now if status == "running" else None,
+        finished_at=None,
+        updated_at=now,
     )
 
 
@@ -442,7 +523,14 @@ class BotServicesTests(unittest.TestCase):
         self.assertEqual(jobs.calls, [("latest_jobs", 3)])
         self.assertIn("Backfill:", response.text)
         self.assertIn("Last jobs:", response.text)
-        self.assertEqual(response.reply_markup["inline_keyboard"][0][0]["callback_data"], "backfill:30d:0")
+        self.assertEqual(
+            [button["callback_data"] for button in response.reply_markup["inline_keyboard"][0]],
+            ["bf:d:1", "bf:d:5", "bf:d:10"],
+        )
+        self.assertEqual(
+            [button["callback_data"] for button in response.reply_markup["inline_keyboard"][1]],
+            ["bf:d:15", "bf:d:30", "bf:d:90"],
+        )
 
     def test_blacklist_shows_listener_policy_from_settings_snapshot(self):
         services = BotServices(
@@ -472,12 +560,111 @@ class BotServicesTests(unittest.TestCase):
         self.assertNotIn("api_hash", response.text.lower())
         self.assertNotIn("database_url", response.text.lower())
 
-    def test_backfill_callbacks_return_safe_mvp_responses(self):
-        services = BotServices(runtime_event_repository=FakeRuntimeEventRepository())
+    def test_backfill_period_callback_shows_six_chat_choices(self):
+        chats = FakeChatQueryRepository(
+            [
+                BackfillChatChoice(chat_id=1001, title="Alice", chat_type="private"),
+                BackfillChatChoice(chat_id=1002, title="Project", chat_type="supergroup"),
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            chat_query_repository=chats,
+        )
 
-        self.assertIn("30 days", services.handle_backfill_callback("30d", "0"))
-        self.assertIn("90 days", services.handle_backfill_callback("90d", "0"))
-        self.assertIn("Backfill", services.handle_backfill_callback("status", "0"))
+        response = services.handle_backfill_callback("d", "30")
+
+        self.assertEqual(chats.calls, [("list_backfill_chats", 0, 6)])
+        self.assertIn("Backfill: choose chat", response.text)
+        self.assertIn("Alice", response.text)
+        self.assertEqual(response.reply_markup["inline_keyboard"][0][0]["callback_data"], "bf:c:30:0:1001")
+
+    def test_backfill_chat_page_callback_has_previous_and_next_buttons(self):
+        chats = FakeChatQueryRepository(
+            [BackfillChatChoice(chat_id=chat_id, title=f"Chat {chat_id}", chat_type="private") for chat_id in range(12)]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            chat_query_repository=chats,
+        )
+
+        response = services.handle_backfill_callback("p", "30:1")
+
+        self.assertEqual(chats.calls, [("list_backfill_chats", 1, 6)])
+        buttons = response.reply_markup["inline_keyboard"][-1]
+        self.assertEqual(buttons[0]["callback_data"], "bf:p:30:0")
+        self.assertEqual(buttons[1]["callback_data"], "bf:p:30:2")
+
+    def test_backfill_chat_selection_shows_confirmation(self):
+        chats = FakeChatQueryRepository([BackfillChatChoice(chat_id=1001, title="Alice", chat_type="private")])
+        now = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            chat_query_repository=chats,
+            clock=lambda: now,
+        )
+
+        response = services.handle_backfill_callback("c", "30:0:1001")
+
+        self.assertEqual(chats.calls, [("get_backfill_chat", 1001)])
+        self.assertIn("Confirm backfill", response.text)
+        self.assertIn("Alice", response.text)
+        self.assertIn("2026-05-07T09:00:00+00:00", response.text)
+        self.assertEqual(response.reply_markup["inline_keyboard"][0][0]["callback_data"], "bf:start:30:1001")
+
+    def test_backfill_start_creates_pending_job(self):
+        chats = FakeChatQueryRepository([BackfillChatChoice(chat_id=1001, title="Alice", chat_type="private")])
+        jobs = FakeBackfillJobRepository()
+        now = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            chat_query_repository=chats,
+            backfill_job_query_repository=jobs,
+            backfill_job_repository=jobs,
+            clock=lambda: now,
+        )
+
+        response = services.handle_backfill_callback("start", "30:1001")
+
+        self.assertEqual(jobs.created_jobs[0]["chat_id"], 1001)
+        self.assertEqual(jobs.created_jobs[0]["chat_title"], "Alice")
+        self.assertEqual(jobs.created_jobs[0]["from_date"].isoformat(), "2026-05-07T09:00:00+00:00")
+        self.assertIn("Backfill job #99 created", response.text)
+        self.assertEqual(response.reply_markup["inline_keyboard"][0][0]["callback_data"], "bf:status:99")
+
+    def test_backfill_cancel_requests_cancellation(self):
+        jobs = FakeBackfillJobRepository()
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            backfill_job_repository=jobs,
+        )
+
+        response = services.handle_backfill_callback("cancel", "7")
+
+        self.assertEqual(jobs.cancelled_jobs, [7])
+        self.assertIn("cancel requested", response)
+
+    def test_backfill_status_returns_safe_job_details(self):
+        jobs = FakeBackfillJobRepository(
+            [
+                make_backfill_record(
+                    backfill_job_id=7,
+                    chat_title="Alice",
+                    status="failed",
+                    last_error_type="TimeoutError",
+                )
+            ]
+        )
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            backfill_job_repository=jobs,
+        )
+
+        response = services.handle_backfill_callback("status", "7")
+
+        self.assertIn("Backfill job #7", response.text)
+        self.assertIn("TimeoutError", response.text)
+        self.assertNotIn("secret", response.text.lower())
 
     def test_status_callback_applies_allowed_status_change(self):
         items = FakeItemRepository()

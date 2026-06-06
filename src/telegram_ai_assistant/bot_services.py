@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .domain import BackfillJobSummary, ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
+from .domain import BackfillChatChoice, BackfillJobRecord, BackfillJobSummary, ExtractedItem, ItemStatus, ItemType, ReviewEntry, RuntimeEvent
 from .health import HealthReport
 
 
+BACKFILL_DAY_OPTIONS = (1, 5, 10, 15, 30, 90)
+BACKFILL_CHAT_PAGE_SIZE = 6
 SAFE_LOG_METADATA_KEYS = (
     "error_type",
     "candidate_count",
@@ -55,8 +58,11 @@ class BotServices:
         item_repository: Any | None = None,
         summary_query_repository: Any | None = None,
         review_repository: Any | None = None,
+        chat_query_repository: Any | None = None,
         backfill_job_query_repository: Any | None = None,
+        backfill_job_repository: Any | None = None,
         settings_snapshot: Any | None = None,
+        clock: Any | None = None,
     ):
         self.runtime_event_repository = runtime_event_repository
         self.health_report_provider = health_report_provider
@@ -64,8 +70,11 @@ class BotServices:
         self.item_repository = item_repository
         self.summary_query_repository = summary_query_repository
         self.review_repository = review_repository
+        self.chat_query_repository = chat_query_repository
         self.backfill_job_query_repository = backfill_job_query_repository
+        self.backfill_job_repository = backfill_job_repository
         self.settings_snapshot = settings_snapshot
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def logs(self) -> str:
         events = self.runtime_event_repository.latest_events(limit=10)
@@ -120,7 +129,7 @@ class BotServices:
         jobs = []
         if self.backfill_job_query_repository is not None:
             jobs = self.backfill_job_query_repository.latest_jobs(limit=3)
-        return BotResponse(_format_backfill(jobs), _backfill_markup())
+        return BotResponse(_format_backfill(jobs), _backfill_days_markup())
 
     def blacklist(self) -> BotResponse:
         if self.settings_snapshot is None:
@@ -161,13 +170,110 @@ class BotServices:
         return f"Status updated: {status.value}"
 
     def handle_backfill_callback(self, action: str, target_id: str) -> str:
+        if action in {"30d", "90d"}:
+            return f"Backfill preset selected: last {action[:-1]} days."
         if action == "30d":
             return "Backfill preset selected: last 30 days."
         if action == "90d":
             return "Backfill preset selected: last 90 days."
+        if action == "d":
+            days = _parse_backfill_days(target_id)
+            if days is None:
+                return "Invalid backfill period."
+            return self._backfill_chat_page(days=days, page=0)
+        if action == "p":
+            parsed = _parse_days_page(target_id)
+            if parsed is None:
+                return "Invalid backfill page."
+            days, page = parsed
+            return self._backfill_chat_page(days=days, page=page)
+        if action in {"c", "confirm"}:
+            parsed_selection = _parse_backfill_selection(target_id, includes_page=action == "c")
+            if parsed_selection is None:
+                return "Invalid backfill chat selection."
+            days, _page, chat_id = parsed_selection
+            return self._backfill_confirmation(days=days, chat_id=chat_id)
+        if action == "start":
+            parsed_start = _parse_days_chat(target_id)
+            if parsed_start is None:
+                return "Invalid backfill start request."
+            days, chat_id = parsed_start
+            return self._start_backfill(days=days, chat_id=chat_id)
+        if action == "cancel":
+            job_id = _parse_int(target_id)
+            if job_id is None:
+                return "Invalid backfill job id."
+            if self.backfill_job_repository is None:
+                return "Backfill job service is not configured."
+            self.backfill_job_repository.request_cancel(job_id)
+            return f"Backfill cancel requested for job #{job_id}."
         if action == "status":
-            return "Backfill status is available from /backfill."
+            job_id = _parse_int(target_id)
+            if job_id is None or job_id == 0:
+                return "Backfill status is available from /backfill."
+            return self._backfill_status(job_id)
         return "Unknown backfill action."
+
+    def _backfill_chat_page(self, *, days: int, page: int) -> BotResponse:
+        if self.chat_query_repository is None:
+            return BotResponse("Backfill chat service is not configured.", _backfill_days_markup())
+        chats = self.chat_query_repository.list_backfill_chats(page=page, page_size=BACKFILL_CHAT_PAGE_SIZE)
+        return BotResponse(
+            _format_backfill_chat_page(days=days, page=page, chats=chats),
+            _backfill_chat_page_markup(days=days, page=page, chats=chats),
+        )
+
+    def _backfill_confirmation(self, *, days: int, chat_id: int) -> BotResponse:
+        chat = self._get_backfill_chat(chat_id)
+        if chat is None:
+            return BotResponse("Backfill chat is not available.", _backfill_days_markup())
+        from_date, to_date = _backfill_date_range(days, self.clock())
+        return BotResponse(
+            _format_backfill_confirmation(chat=chat, days=days, from_date=from_date, to_date=to_date),
+            _backfill_confirmation_markup(days=days, chat_id=chat.chat_id),
+        )
+
+    def _start_backfill(self, *, days: int, chat_id: int) -> BotResponse:
+        if self.backfill_job_repository is None:
+            return BotResponse("Backfill job service is not configured.", _backfill_days_markup())
+        chat = self._get_backfill_chat(chat_id)
+        if chat is None:
+            return BotResponse("Backfill chat is not available.", _backfill_days_markup())
+        from_date, to_date = _backfill_date_range(days, self.clock())
+        job = self.backfill_job_repository.create_job(
+            chat_id=chat.chat_id,
+            chat_title=chat.title,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        return BotResponse(
+            _format_backfill_job_created(job),
+            _backfill_job_markup(job),
+        )
+
+    def _backfill_status(self, job_id: int) -> BotResponse:
+        if self.backfill_job_repository is None:
+            return BotResponse("Backfill job service is not configured.", _backfill_days_markup())
+        getter = getattr(self.backfill_job_repository, "get_job", None)
+        job = getter(job_id) if getter is not None else None
+        if job is None:
+            return BotResponse(f"Backfill job #{job_id} was not found.", _backfill_days_markup())
+        return BotResponse(_format_backfill_job_status(job), _backfill_job_markup(job))
+
+    def _get_backfill_chat(self, chat_id: int) -> BackfillChatChoice | None:
+        if self.chat_query_repository is None:
+            return None
+        getter = getattr(self.chat_query_repository, "get_backfill_chat", None)
+        if getter is not None:
+            return getter(chat_id)
+        for page in range(0, 20):
+            chats = self.chat_query_repository.list_backfill_chats(page=page, page_size=BACKFILL_CHAT_PAGE_SIZE)
+            match = next((chat for chat in chats if chat.chat_id == chat_id), None)
+            if match is not None:
+                return match
+            if len(chats) < BACKFILL_CHAT_PAGE_SIZE:
+                break
+        return None
 
 
 def _format_runtime_event(event: RuntimeEvent) -> str:
@@ -358,19 +464,179 @@ def _format_backfill(jobs: list[BackfillJobSummary]) -> str:
     return "\n".join(lines)
 
 
-def _backfill_markup() -> dict[str, object]:
+def _backfill_days_markup() -> dict[str, object]:
     return {
         "inline_keyboard": [
             [
-                {"text": "Last 30 days", "callback_data": "backfill:30d:0"},
-                {"text": "Last 90 days", "callback_data": "backfill:90d:0"},
+                {"text": "1d", "callback_data": "bf:d:1"},
+                {"text": "5d", "callback_data": "bf:d:5"},
+                {"text": "10d", "callback_data": "bf:d:10"},
             ],
             [
-                {"text": "Status", "callback_data": "backfill:status:0"},
+                {"text": "15d", "callback_data": "bf:d:15"},
+                {"text": "30d", "callback_data": "bf:d:30"},
+                {"text": "90d", "callback_data": "bf:d:90"},
+            ],
+            [
+                {"text": "Refresh", "callback_data": "menu:backfill:0"},
                 {"text": "Help", "callback_data": "menu:help:0"},
             ],
         ]
     }
+
+
+def _format_backfill_chat_page(*, days: int, page: int, chats: list[BackfillChatChoice]) -> str:
+    lines = [
+        "Backfill: choose chat",
+        f"Period: last {days} days",
+        f"Page: {page + 1}",
+    ]
+    if not chats:
+        lines.append("No eligible chats on this page.")
+        return "\n".join(lines)
+    for index, chat in enumerate(chats, start=1):
+        lines.append(f"{index}. {_chat_display_name(chat)} [{chat.chat_type}]")
+    return "\n".join(lines)
+
+
+def _backfill_chat_page_markup(*, days: int, page: int, chats: list[BackfillChatChoice]) -> dict[str, object]:
+    rows = [
+        [{"text": _chat_display_name(chat), "callback_data": f"bf:c:{days}:{page}:{chat.chat_id}"}]
+        for chat in chats
+    ]
+    navigation = []
+    if page > 0:
+        navigation.append({"text": "Previous", "callback_data": f"bf:p:{days}:{page - 1}"})
+    navigation.append({"text": "Next", "callback_data": f"bf:p:{days}:{page + 1}"})
+    rows.append([{"text": "Periods", "callback_data": "menu:backfill:0"}])
+    rows.append(navigation)
+    return {"inline_keyboard": rows}
+
+
+def _format_backfill_confirmation(
+    *,
+    chat: BackfillChatChoice,
+    days: int,
+    from_date: datetime,
+    to_date: datetime,
+) -> str:
+    return "\n".join(
+        [
+            "Confirm backfill",
+            f"Chat: {_chat_display_name(chat)}",
+            f"Period: last {days} days",
+            f"From: {from_date.isoformat()}",
+            f"To: {to_date.isoformat()}",
+        ]
+    )
+
+
+def _backfill_confirmation_markup(*, days: int, chat_id: int) -> dict[str, object]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Start", "callback_data": f"bf:start:{days}:{chat_id}"},
+                {"text": "Cancel", "callback_data": f"bf:d:{days}"},
+            ]
+        ]
+    }
+
+
+def _format_backfill_job_created(job: BackfillJobRecord) -> str:
+    return "\n".join(
+        [
+            f"Backfill job #{job.backfill_job_id} created.",
+            f"Chat: {job.chat_title or job.chat_id}",
+            f"Status: {job.status}",
+            f"From: {job.from_date.isoformat()}",
+            f"To: {job.to_date.isoformat()}",
+        ]
+    )
+
+
+def _format_backfill_job_status(job: BackfillJobRecord) -> str:
+    lines = [
+        f"Backfill job #{job.backfill_job_id}",
+        f"Chat: {job.chat_title or job.chat_id}",
+        f"Status: {job.status}",
+        f"Saved: {job.saved_count}",
+        f"From: {job.from_date.isoformat()}",
+        f"To: {job.to_date.isoformat()}",
+    ]
+    if job.next_before_message_id is not None:
+        lines.append(f"Next cursor: {job.next_before_message_id}")
+    if job.last_error_type:
+        lines.append(f"Error: {job.last_error_type}")
+    return "\n".join(lines)
+
+
+def _backfill_job_markup(job: BackfillJobRecord) -> dict[str, object]:
+    row = [{"text": "Status", "callback_data": f"bf:status:{job.backfill_job_id}"}]
+    if job.status in {"pending", "running"}:
+        row.append({"text": "Cancel", "callback_data": f"bf:cancel:{job.backfill_job_id}"})
+    return {"inline_keyboard": [row, [{"text": "Backfill", "callback_data": "menu:backfill:0"}]]}
+
+
+def _chat_display_name(chat: BackfillChatChoice) -> str:
+    return chat.title.strip() or str(chat.chat_id)
+
+
+def _backfill_date_range(days: int, now: datetime) -> tuple[datetime, datetime]:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return now - timedelta(days=days), now
+
+
+def _parse_backfill_days(value: str) -> int | None:
+    days = _parse_int(value)
+    if days in BACKFILL_DAY_OPTIONS:
+        return days
+    return None
+
+
+def _parse_days_page(value: str) -> tuple[int, int] | None:
+    parts = value.split(":")
+    if len(parts) != 2:
+        return None
+    days = _parse_backfill_days(parts[0])
+    page = _parse_int(parts[1])
+    if days is None or page is None or page < 0:
+        return None
+    return days, page
+
+
+def _parse_backfill_selection(value: str, *, includes_page: bool) -> tuple[int, int, int] | None:
+    parts = value.split(":")
+    if includes_page:
+        if len(parts) != 3:
+            return None
+        days = _parse_backfill_days(parts[0])
+        page = _parse_int(parts[1])
+        chat_id = _parse_int(parts[2])
+    else:
+        if len(parts) != 2:
+            return None
+        days = _parse_backfill_days(parts[0])
+        page = 0
+        chat_id = _parse_int(parts[1])
+    if days is None or page is None or chat_id is None:
+        return None
+    return days, page, chat_id
+
+
+def _parse_days_chat(value: str) -> tuple[int, int] | None:
+    parsed = _parse_backfill_selection(value, includes_page=False)
+    if parsed is None:
+        return None
+    days, _page, chat_id = parsed
+    return days, chat_id
+
+
+def _parse_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _format_blacklist(settings: Any) -> str:

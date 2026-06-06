@@ -1185,8 +1185,53 @@ class ChatQueryRepository:
         )
         return [_backfill_chat_choice_from_row(row) for row in rows]
 
+    def get_backfill_chat(self, chat_id: int) -> BackfillChatChoice | None:
+        sql = """
+            SELECT
+                chat_id,
+                title,
+                chat_type
+            FROM chats
+            WHERE account_id = %(account_id)s
+              AND chat_id = %(chat_id)s
+              AND chat_id <> ALL(%(denied_chat_ids)s)
+              AND (
+                    chat_type IN ('private', 'group', 'supergroup')
+                 OR (chat_type = 'channel' AND chat_id = ANY(%(allowed_channel_ids)s))
+                 OR (chat_type = 'broadcast' AND chat_id = ANY(%(allowed_channel_ids)s))
+              )
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "chat_id": chat_id,
+                "allowed_channel_ids": sorted(self._allowed_channel_ids),
+                "denied_chat_ids": sorted(self._denied_chat_ids),
+            },
+        )
+        return None if row is None else _backfill_chat_choice_from_row(row)
+
 
 class BackfillJobRepository(BackfillJobQueryRepository):
+    def get_job(self, backfill_job_id: int) -> BackfillJobRecord | None:
+        sql = f"""
+            SELECT {_BACKFILL_JOB_RETURNING_COLUMNS}
+            FROM backfill_jobs
+            WHERE account_id = %(account_id)s
+              AND backfill_job_id = %(backfill_job_id)s
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "backfill_job_id": backfill_job_id,
+            },
+        )
+        return None if row is None else _backfill_job_record_from_row(row)
+
     def create_job(
         self,
         *,

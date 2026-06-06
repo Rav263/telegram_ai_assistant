@@ -240,6 +240,56 @@ class BotRouterTests(unittest.TestCase):
                 self.assertEqual(services.calls, [expected_call])
                 self.assertEqual(bot.answered_callbacks[0], ("callback-1", expected_answer, False))
 
+    def test_backfill_callback_response_sends_message_with_markup(self):
+        class BackfillResponseServices(FakeBotServices):
+            def handle_backfill_callback(self, action: str, target_id: str):
+                self.calls.append(("backfill_callback", action, target_id))
+                return type(
+                    "Response",
+                    (),
+                    {
+                        "text": "choose chat",
+                        "reply_markup": {
+                            "inline_keyboard": [[{"text": "Alice", "callback_data": "bf:c:30:0:1001"}]]
+                        },
+                    },
+                )()
+
+        services = BackfillResponseServices()
+        bot = FakeBotApi()
+        router = BotRouter(
+            access=BotAccessController(allowed_user_id=100),
+            bot_api=bot,
+            services=services,
+        )
+
+        router.handle_update(
+            {
+                "callback_query": {
+                    "id": "callback-1",
+                    "from": {"id": 100},
+                    "message": {
+                        "chat": {"id": 123},
+                        "message_id": 456,
+                    },
+                    "data": "bf:d:30",
+                }
+            }
+        )
+
+        self.assertEqual(services.calls, [("backfill_callback", "d", "30")])
+        self.assertEqual(bot.answered_callbacks, [("callback-1", "Opened.", False)])
+        self.assertEqual(
+            bot.sent_messages,
+            [
+                (
+                    123,
+                    "choose chat",
+                    {"inline_keyboard": [[{"text": "Alice", "callback_data": "bf:c:30:0:1001"}]]},
+                )
+            ],
+        )
+
     def test_menu_callbacks_dispatch_to_command_services_and_send_message(self):
         callback_cases = {
             "menu:summary:0": ("summary", "summary response"),

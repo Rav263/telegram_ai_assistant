@@ -82,7 +82,13 @@ class BotRouter:
         elif kind == "status":
             answer_text = str(self.services.handle_status_callback(action, target_id))
         elif kind == "backfill":
-            answer_text = str(self.services.handle_backfill_callback(action, target_id))
+            response = self.services.handle_backfill_callback(action, target_id)
+            self._handle_callback_response(callback_query=callback_query, callback_id=callback_id, response=response)
+            return
+        elif kind == "bf":
+            response = self.services.handle_backfill_callback(action, target_id)
+            self._handle_callback_response(callback_query=callback_query, callback_id=callback_id, response=response)
+            return
         else:
             return
 
@@ -107,6 +113,23 @@ class BotRouter:
         if callback_id:
             self.bot_api.answer_callback_query(callback_query_id=callback_id, text="Opened.")
 
+        message = callback_query.get("message", {})
+        chat_id = int(message.get("chat", {}).get("id", 0))
+        if chat_id:
+            self._send_response(chat_id=chat_id, response=response)
+
+    def _handle_callback_response(
+        self,
+        *,
+        callback_query: Mapping[str, Any],
+        callback_id: str,
+        response: Any,
+    ) -> None:
+        if not hasattr(response, "text"):
+            self.bot_api.answer_callback_query(callback_query_id=callback_id, text=str(response))
+            return
+
+        self.bot_api.answer_callback_query(callback_query_id=callback_id, text="Opened.")
         message = callback_query.get("message", {})
         chat_id = int(message.get("chat", {}).get("id", 0))
         if chat_id:
