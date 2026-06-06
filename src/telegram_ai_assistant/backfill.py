@@ -270,6 +270,37 @@ class PersistedBackfillJobRunner:
         )
 
 
+class ConnectionScopedBackfillJobRunner:
+    def __init__(
+        self,
+        *,
+        connection_factory: Any,
+        job_repository_factory: Any,
+        runtime_event_repository_factory: Any,
+        client_factory: Any,
+        backfill_service_factory: Any = BackfillService,
+        **service_kwargs: Any,
+    ):
+        self.connection_factory = connection_factory
+        self.job_repository_factory = job_repository_factory
+        self.runtime_event_repository_factory = runtime_event_repository_factory
+        self.client_factory = client_factory
+        self.backfill_service_factory = backfill_service_factory
+        self.service_kwargs = dict(service_kwargs)
+
+    async def run_once_with_client(self, *, limit: int, client: Any) -> PersistedBackfillRunResult:
+        with self.connection_factory.connection() as connection:
+            runner = PersistedBackfillJobRunner(
+                job_repository=self.job_repository_factory(connection),
+                connection_factory=self.connection_factory,
+                client_factory=self.client_factory,
+                backfill_service_factory=self.backfill_service_factory,
+                runtime_event_repository=self.runtime_event_repository_factory(connection),
+                **self.service_kwargs,
+            )
+            return await runner.run_once_with_client(limit=limit, client=client)
+
+
 def _run_maybe_awaitable(value: Any) -> Any:
     if inspect.isawaitable(value):
         return asyncio.run(value)

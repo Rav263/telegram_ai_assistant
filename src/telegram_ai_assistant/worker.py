@@ -155,14 +155,7 @@ class Worker:
         )
 
     def process_backfill_jobs(self, *, limit: int) -> WorkerResult:
-        if self.backfill_job_runner is None:
-            return WorkerResult()
-        result = self.backfill_job_runner.run_once(limit=limit)
-        return WorkerResult(
-            backfill_jobs=int(getattr(result, "backfill_jobs", 0) or 0),
-            backfill_saved_messages=int(getattr(result, "saved_messages", 0) or 0),
-            backfill_failures=int(getattr(result, "failures", 0) or 0),
-        )
+        return WorkerResult()
 
     def _call_optional(self, target: Any, method_name: str, *args: Any) -> None:
         method = getattr(target, method_name, None)

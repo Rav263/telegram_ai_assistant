@@ -165,6 +165,9 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["policy"].denied_chat_ids, frozenset({1002}))
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
+        self.assertEqual(captured["backfill_job_runner"].__class__.__name__, "ConnectionScopedBackfillJobRunner")
+        self.assertEqual(captured["backfill_batch_size"], 25)
+        self.assertEqual(factory.opened, 0)
 
     def test_run_worker_once_builds_worker_with_repositories_and_settings(self):
         factory = FakeConnectionFactory()
@@ -182,10 +185,6 @@ class AppContextTests(unittest.TestCase):
                 captured["candidate_limit"] = limit
                 return WorkerResult(processed_candidates=1, extracted_items=1, saved_items=1)
 
-            def process_backfill_jobs(self, *, limit):
-                captured["backfill_limit"] = limit
-                return WorkerResult(backfill_jobs=1, backfill_saved_messages=3)
-
         context = AppContext(
             settings=make_settings(),
             connection_factory=factory,
@@ -200,17 +199,16 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(result.processed_candidates, 1)
         self.assertEqual(result.extracted_items, 1)
         self.assertEqual(result.saved_items, 1)
-        self.assertEqual(result.backfill_jobs, 1)
-        self.assertEqual(result.backfill_saved_messages, 3)
+        self.assertEqual(result.backfill_jobs, 0)
+        self.assertEqual(result.backfill_saved_messages, 0)
         self.assertEqual(captured["message_limit"], 25)
         self.assertEqual(captured["candidate_limit"], 25)
-        self.assertEqual(captured["backfill_limit"], 25)
         self.assertEqual(captured["item_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["status_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["extraction_service"]._llm_client, "llm-client")
         self.assertEqual(captured["message_source"].__class__.__name__, "MessageProcessingRepository")
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
-        self.assertEqual(captured["backfill_job_runner"].__class__.__name__, "PersistedBackfillJobRunner")
+        self.assertNotIn("backfill_job_runner", captured)
         self.assertEqual(factory.opened, 1)
         self.assertTrue(factory.connection_obj.exited)
 

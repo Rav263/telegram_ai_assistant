@@ -3,7 +3,13 @@ from types import SimpleNamespace
 import unittest
 import asyncio
 
-from telegram_ai_assistant.backfill import BackfillJob, BackfillRunner, BackfillStatus, PersistedBackfillJobRunner
+from telegram_ai_assistant.backfill import (
+    BackfillJob,
+    BackfillRunner,
+    BackfillStatus,
+    ConnectionScopedBackfillJobRunner,
+    PersistedBackfillJobRunner,
+)
 from telegram_ai_assistant.domain import BackfillJobRecord
 
 
@@ -61,6 +67,30 @@ class FakeMessageRepository:
 
     def save_messages(self, messages) -> None:
         self.saved_batches.append(tuple(messages))
+
+
+class FakeConnection:
+    def __init__(self):
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.exited = True
+        return False
+
+
+class FakeConnectionFactory:
+    def __init__(self):
+        self.connection_obj = FakeConnection()
+        self.opened = 0
+
+    def connection(self):
+        self.opened += 1
+        return self.connection_obj
 
 
 def make_persisted_job(
@@ -297,6 +327,34 @@ class PersistedBackfillJobRunnerTests(unittest.TestCase):
         self.assertEqual(events.events[0]["metadata"]["error_type"], "RuntimeError")
         self.assertEqual(events.events[0]["metadata"]["endpoint_host"], "localhost")
         self.assertNotIn("raw private Telegram text", str(events.events[0]))
+
+
+class ConnectionScopedBackfillJobRunnerTests(unittest.TestCase):
+    def setUp(self):
+        FakeBackfillService.instances = []
+
+    def test_run_once_with_client_opens_connection_for_one_poll(self):
+        factory = FakeConnectionFactory()
+        jobs = FakePersistedBackfillJobRepository(job=make_persisted_job())
+        events = FakeRuntimeEventRepository()
+        service_result = SimpleNamespace(saved_count=2, next_before_message_id=400)
+
+        runner = ConnectionScopedBackfillJobRunner(
+            connection_factory=factory,
+            job_repository_factory=lambda connection: jobs,
+            runtime_event_repository_factory=lambda connection: events,
+            backfill_service_factory=FakeBackfillService,
+            client_factory=None,
+            result=service_result,
+        )
+
+        result = asyncio.run(runner.run_once_with_client(limit=25, client="shared-client"))
+
+        self.assertEqual(result.saved_messages, 2)
+        self.assertEqual(factory.opened, 1)
+        self.assertTrue(factory.connection_obj.entered)
+        self.assertTrue(factory.connection_obj.exited)
+        self.assertEqual(FakeBackfillService.instances[0].kwargs["client"], "shared-client")
 
 
 class BackfillJobTests(unittest.TestCase):
