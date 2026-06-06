@@ -10,10 +10,12 @@ from .bot_runtime import BotRuntime
 from .bot_services import BotServices
 from .db.connection import PostgresConnectionFactory
 from .db.migrations import apply_schema
+from .backfill import PersistedBackfillJobRunner
 from .db.repositories import (
-    BackfillJobQueryRepository,
+    BackfillJobRepository,
     BotRuntimeStateRepository,
     CandidateRepository,
+    ChatQueryRepository,
     ItemRepository,
     ItemQueryRepository,
     LLMRunRepository,
@@ -174,12 +176,22 @@ class AppContext:
                 ),
                 llm_run_repository=LLMRunRepository(connection),
                 runtime_event_repository=RuntimeEventRepository(connection),
+                backfill_job_runner=PersistedBackfillJobRunner(
+                    job_repository=BackfillJobRepository(
+                        connection,
+                        account_id=self.settings.telegram_ingest_account_id,
+                    ),
+                    backfill_service_factory=self.backfill_factory,
+                    connection_factory=self.connection_factory,
+                    client_factory=self.telegram_client_factory(self.settings),
+                ),
                 item_auto_apply_threshold=self.settings.worker_item_auto_apply_threshold,
                 status_auto_apply_threshold=self.settings.worker_status_auto_apply_threshold,
             )
             return merge_worker_results(
                 worker.process_messages(limit=self.settings.worker_batch_size),
                 worker.process_candidates(limit=self.settings.worker_batch_size),
+                worker.process_backfill_jobs(limit=self.settings.worker_batch_size),
             )
 
     def run_bot_forever(self, *, stop_requested: Callable[[], bool] | None = None):
@@ -191,6 +203,10 @@ class AppContext:
                 account_id=self.settings.telegram_ingest_account_id,
             )
             review_repository = ReviewRepository(
+                connection,
+                account_id=self.settings.telegram_ingest_account_id,
+            )
+            backfill_job_repository = BackfillJobRepository(
                 connection,
                 account_id=self.settings.telegram_ingest_account_id,
             )
@@ -207,10 +223,14 @@ class AppContext:
                     ),
                     summary_query_repository=item_query_repository,
                     review_repository=review_repository,
-                    backfill_job_query_repository=BackfillJobQueryRepository(
+                    chat_query_repository=ChatQueryRepository(
                         connection,
                         account_id=self.settings.telegram_ingest_account_id,
+                        allowed_channel_ids=self.settings.telegram_listener_allowed_channel_ids,
+                        denied_chat_ids=self.settings.telegram_listener_denied_chat_ids,
                     ),
+                    backfill_job_query_repository=backfill_job_repository,
+                    backfill_job_repository=backfill_job_repository,
                     settings_snapshot=self.settings,
                 ),
             )
@@ -234,4 +254,7 @@ def merge_worker_results(*results: WorkerResult) -> WorkerResult:
         review_items=sum(result.review_items for result in results),
         review_status_changes=sum(result.review_status_changes for result in results),
         failures=sum(result.failures for result in results),
+        backfill_jobs=sum(result.backfill_jobs for result in results),
+        backfill_saved_messages=sum(result.backfill_saved_messages for result in results),
+        backfill_failures=sum(result.backfill_failures for result in results),
     )

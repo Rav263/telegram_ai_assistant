@@ -182,6 +182,10 @@ class AppContextTests(unittest.TestCase):
                 captured["candidate_limit"] = limit
                 return WorkerResult(processed_candidates=1, extracted_items=1, saved_items=1)
 
+            def process_backfill_jobs(self, *, limit):
+                captured["backfill_limit"] = limit
+                return WorkerResult(backfill_jobs=1, backfill_saved_messages=3)
+
         context = AppContext(
             settings=make_settings(),
             connection_factory=factory,
@@ -196,13 +200,17 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(result.processed_candidates, 1)
         self.assertEqual(result.extracted_items, 1)
         self.assertEqual(result.saved_items, 1)
+        self.assertEqual(result.backfill_jobs, 1)
+        self.assertEqual(result.backfill_saved_messages, 3)
         self.assertEqual(captured["message_limit"], 25)
         self.assertEqual(captured["candidate_limit"], 25)
+        self.assertEqual(captured["backfill_limit"], 25)
         self.assertEqual(captured["item_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["status_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["extraction_service"]._llm_client, "llm-client")
         self.assertEqual(captured["message_source"].__class__.__name__, "MessageProcessingRepository")
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
+        self.assertEqual(captured["backfill_job_runner"].__class__.__name__, "PersistedBackfillJobRunner")
         self.assertEqual(factory.opened, 1)
         self.assertTrue(factory.connection_obj.exited)
 
@@ -239,8 +247,10 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["router"].services.review_repository.__class__.__name__, "ReviewRepository")
         self.assertEqual(
             captured["router"].services.backfill_job_query_repository.__class__.__name__,
-            "BackfillJobQueryRepository",
+            "BackfillJobRepository",
         )
+        self.assertEqual(captured["router"].services.backfill_job_repository.__class__.__name__, "BackfillJobRepository")
+        self.assertEqual(captured["router"].services.chat_query_repository.__class__.__name__, "ChatQueryRepository")
         self.assertEqual(captured["router"].services.settings_snapshot.lm_studio_model, "local-model")
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
         self.assertEqual(captured["state_repository"].__class__.__name__, "BotRuntimeStateRepository")

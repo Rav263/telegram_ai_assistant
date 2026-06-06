@@ -131,7 +131,8 @@ def _run_worker_loop(
             (
                 "worker cycle completed scored_messages=%s queued_candidates=%s "
                 "processed_candidates=%s extracted_items=%s saved_items=%s "
-                "review_items=%s review_status_changes=%s failures=%s"
+                "review_items=%s review_status_changes=%s failures=%s "
+                "backfill_jobs=%s backfill_saved_messages=%s backfill_failures=%s"
             ),
             result.scored_messages,
             result.queued_candidates,
@@ -141,6 +142,9 @@ def _run_worker_loop(
             result.review_items,
             result.review_status_changes,
             result.failures,
+            result.backfill_jobs,
+            result.backfill_saved_messages,
+            result.backfill_failures,
         )
         if once:
             print(json.dumps(_worker_result_payload(result), ensure_ascii=False, sort_keys=True))
@@ -265,4 +269,7 @@ def _worker_result_payload(result: Any) -> dict[str, Any]:
         "review_items": result.review_items,
         "review_status_changes": result.review_status_changes,
         "failures": result.failures,
+        "backfill_jobs": result.backfill_jobs,
+        "backfill_saved_messages": result.backfill_saved_messages,
+        "backfill_failures": result.backfill_failures,
     }

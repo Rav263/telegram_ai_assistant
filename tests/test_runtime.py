@@ -290,6 +290,9 @@ class RuntimeTests(unittest.TestCase):
                     review_items=0,
                     review_status_changes=0,
                     failures=0,
+                    backfill_jobs=1,
+                    backfill_saved_messages=3,
+                    backfill_failures=0,
                 )
 
         output = io.StringIO()
@@ -308,6 +311,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(payload["queued_candidates"], 1)
         self.assertEqual(payload["processed_candidates"], 1)
         self.assertEqual(payload["saved_items"], 1)
+        self.assertEqual(payload["backfill_jobs"], 1)
+        self.assertEqual(payload["backfill_saved_messages"], 3)
+        self.assertEqual(payload["backfill_failures"], 0)
 
     def test_run_worker_daemon_repeats_until_stop_requested_without_stdout(self):
         calls = []
