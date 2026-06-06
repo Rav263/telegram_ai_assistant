@@ -30,6 +30,30 @@ class ItemStatus(StrEnum):
     WAITING_FOR = "waiting_for"
 
 
+class LLMActionType(StrEnum):
+    CREATE_ITEM = "create_item"
+    UPDATE_ITEM_STATUS = "update_item_status"
+    UPDATE_ITEM_FIELD = "update_item_field"
+    MERGE_DUPLICATE = "merge_duplicate"
+    SCHEDULE_NOTIFICATION = "schedule_notification"
+    LINK_SOURCE = "link_source"
+
+
+class LLMActionState(StrEnum):
+    PENDING = "pending"
+    REVIEW = "review"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    IGNORED = "ignored"
+
+
+class LLMActionDecision(StrEnum):
+    AUTO_APPLY = "auto_apply"
+    REVIEW = "review"
+    REJECT = "reject"
+
+
 @dataclass(frozen=True)
 class SourceRef:
     chat_id: int
@@ -76,6 +100,22 @@ class ReviewEntry:
     payload: dict[str, object]
     created_at: datetime
     item: ExtractedItem | None = None
+    llm_action: "LLMAction | None" = None
+
+
+@dataclass(frozen=True)
+class LLMAction:
+    action_key: str
+    action_type: LLMActionType
+    state: LLMActionState
+    confidence: float
+    payload: dict[str, object]
+    source_refs: tuple[SourceRef, ...]
+    rationale: str
+    llm_action_id: int | None = None
+    target_item_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

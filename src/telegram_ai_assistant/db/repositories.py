@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+import hashlib
 import json
 from enum import StrEnum
 from typing import Any, Protocol, Sequence
@@ -16,6 +17,9 @@ from telegram_ai_assistant.domain import (
     ExtractedItem,
     ItemStatus,
     ItemType,
+    LLMAction,
+    LLMActionState,
+    LLMActionType,
     Message,
     MessageDirection,
     ReviewEntry,
@@ -133,6 +137,7 @@ def _review_entry_from_row(row: object) -> ReviewEntry:
         payload=_json_object(_row_value(row, "payload", 4)),
         created_at=_row_value(row, "created_at", 5),
         item=_review_item_from_row(row),
+        llm_action=_review_action_from_row(row),
     )
 
 
@@ -190,6 +195,22 @@ def _bot_session_from_row(row: object) -> BotSession:
     )
 
 
+def _llm_action_from_row(row: object) -> LLMAction:
+    return LLMAction(
+        llm_action_id=int(_row_value(row, "llm_action_id", 0)),
+        action_key=str(_row_value(row, "action_key", 1)),
+        action_type=LLMActionType(str(_row_value(row, "action_type", 2))),
+        state=LLMActionState(str(_row_value(row, "state", 3))),
+        confidence=float(_row_value(row, "confidence", 4)),
+        target_item_id=_row_value(row, "target_item_id", 5),
+        payload=_json_object(_row_value(row, "payload", 6)),
+        source_refs=_source_refs_from_json(_row_value(row, "source_refs", 7)),
+        rationale=str(_row_value(row, "rationale", 8) or ""),
+        created_at=_row_value(row, "created_at", 9),
+        updated_at=_row_value(row, "updated_at", 10),
+    )
+
+
 def _backfill_job_record_from_row(row: object) -> BackfillJobRecord:
     return BackfillJobRecord(
         backfill_job_id=int(_row_value(row, "backfill_job_id", 0)),
@@ -234,6 +255,25 @@ def _review_item_from_row(row: object) -> ExtractedItem | None:
         due_at=_row_value(row, "due_at", 13),
         sources=_source_refs_from_json(_row_value(row, "source_refs", 14)),
         metadata={str(key): str(value) for key, value in _json_object(_row_value(row, "metadata", 15)).items()},
+    )
+
+
+def _review_action_from_row(row: object) -> LLMAction | None:
+    llm_action_id = _optional_row_value(row, "llm_action_id", 16, None)
+    if llm_action_id is None:
+        return None
+    return LLMAction(
+        llm_action_id=int(llm_action_id),
+        action_key=str(_optional_row_value(row, "action_key", 17, "")),
+        action_type=LLMActionType(str(_optional_row_value(row, "action_type", 18, LLMActionType.CREATE_ITEM.value))),
+        state=LLMActionState(str(_optional_row_value(row, "action_state", 19, LLMActionState.PENDING.value))),
+        confidence=float(_optional_row_value(row, "action_confidence", 20, 0.0)),
+        target_item_id=_optional_row_value(row, "target_item_id", 21, None),
+        payload=_json_object(_optional_row_value(row, "action_payload", 22, {})),
+        source_refs=_source_refs_from_json(_optional_row_value(row, "action_source_refs", 23, [])),
+        rationale=str(_optional_row_value(row, "action_rationale", 24, "") or ""),
+        created_at=_optional_row_value(row, "action_created_at", 25, None),
+        updated_at=_optional_row_value(row, "action_updated_at", 26, None),
     )
 
 
@@ -299,6 +339,48 @@ def _source_refs_json(item: ExtractedItem) -> str:
             for source in item.sources
         ]
     )
+
+
+def _source_ref_values(source_refs: Sequence[SourceRef]) -> list[dict[str, int]]:
+    return [
+        {
+            "chat_id": source.chat_id,
+            "telegram_message_id": source.telegram_message_id,
+        }
+        for source in source_refs
+    ]
+
+
+def _source_refs_json_from_refs(source_refs: Sequence[SourceRef]) -> str:
+    return _json_dumps(_source_ref_values(source_refs))
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(_json_ready(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def llm_action_key(
+    *,
+    action_type: LLMActionType | str,
+    source_refs: Sequence[SourceRef],
+    target_item_id: str | None,
+    payload: Mapping[str, object],
+) -> str:
+    action_type_value = action_type.value if isinstance(action_type, StrEnum) else str(action_type)
+    source_values = sorted(
+        _source_ref_values(source_refs),
+        key=lambda source: (source["chat_id"], source["telegram_message_id"]),
+    )
+    canonical = _canonical_json(
+        {
+            "action_type": action_type_value,
+            "source_refs": source_values,
+            "target_item_id": target_item_id or "",
+            "payload": dict(payload),
+        }
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+    return f"{action_type_value}:{digest}"
 
 
 def _item_params(account_id: str, item: ExtractedItem, *, status: object | None = None) -> dict[str, object]:
@@ -739,6 +821,204 @@ class BotSessionRepository:
         _execute(self._connection, sql, {"now": now})
 
 
+class LLMActionRepository:
+    def __init__(self, connection: Connection, *, account_id: str):
+        self._connection = connection
+        self._account_id = account_id
+
+    def save_action(self, action: LLMAction) -> None:
+        sql = """
+            INSERT INTO llm_actions (
+                account_id,
+                action_key,
+                action_type,
+                state,
+                confidence,
+                target_item_id,
+                payload,
+                source_refs,
+                rationale
+            )
+            VALUES (
+                %(account_id)s,
+                %(action_key)s,
+                %(action_type)s,
+                %(state)s,
+                %(confidence)s,
+                %(target_item_id)s,
+                %(payload)s::jsonb,
+                %(source_refs)s::jsonb,
+                %(rationale)s
+            )
+            ON CONFLICT (action_key)
+            DO UPDATE SET
+                confidence = EXCLUDED.confidence,
+                target_item_id = EXCLUDED.target_item_id,
+                payload = EXCLUDED.payload,
+                source_refs = EXCLUDED.source_refs,
+                rationale = EXCLUDED.rationale,
+                updated_at = NOW()
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "action_key": action.action_key,
+                "action_type": action.action_type.value,
+                "state": action.state.value,
+                "confidence": action.confidence,
+                "target_item_id": action.target_item_id,
+                "payload": _json_dumps(action.payload),
+                "source_refs": _source_refs_json_from_refs(action.source_refs),
+                "rationale": action.rationale,
+            },
+        )
+
+    def get_by_key(self, action_key: str) -> LLMAction | None:
+        sql = """
+            SELECT
+                llm_action_id,
+                action_key,
+                action_type,
+                state,
+                confidence,
+                target_item_id,
+                payload,
+                source_refs,
+                rationale,
+                created_at,
+                updated_at
+            FROM llm_actions
+            WHERE account_id = %(account_id)s
+              AND action_key = %(action_key)s
+        """
+        row = _fetchone(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "action_key": action_key,
+            },
+        )
+        return None if row is None else _llm_action_from_row(row)
+
+    def list_pending_review_actions(self, *, limit: int) -> list[LLMAction]:
+        sql = """
+            SELECT
+                llm_action_id,
+                action_key,
+                action_type,
+                state,
+                confidence,
+                target_item_id,
+                payload,
+                source_refs,
+                rationale,
+                created_at,
+                updated_at
+            FROM llm_actions
+            WHERE account_id = %(account_id)s
+              AND state = %(state)s
+            ORDER BY created_at ASC, llm_action_id ASC
+            LIMIT %(limit)s
+        """
+        rows = _fetchall(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "state": LLMActionState.REVIEW.value,
+                "limit": limit,
+            },
+        )
+        return [_llm_action_from_row(row) for row in rows]
+
+    def mark_review(self, llm_action_id: int) -> None:
+        self._set_state(llm_action_id, LLMActionState.REVIEW)
+
+    def mark_applied(self, llm_action_id: int) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                applied_at = NOW(),
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = %(llm_action_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "llm_action_id": llm_action_id,
+                "state": LLMActionState.APPLIED.value,
+            },
+        )
+
+    def mark_rejected(self, llm_action_id: int) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                rejected_at = NOW(),
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = %(llm_action_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "llm_action_id": llm_action_id,
+                "state": LLMActionState.REJECTED.value,
+            },
+        )
+
+    def mark_failed(self, llm_action_id: int, *, error_type: str) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                payload = payload || %(failure_payload)s::jsonb,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = %(llm_action_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "llm_action_id": llm_action_id,
+                "state": LLMActionState.FAILED.value,
+                "error_type": error_type,
+                "failure_payload": _json_dumps({"error_type": error_type}),
+            },
+        )
+
+    def _set_state(self, llm_action_id: int, state: LLMActionState) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = %(llm_action_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "llm_action_id": llm_action_id,
+                "state": state.value,
+            },
+        )
+
+
 class MessageRepository:
     def __init__(self, connection: Connection):
         self._connection = connection
@@ -1134,6 +1414,9 @@ class ItemQueryRepository:
         }
         return [_item_from_row(row) for row in _fetchall(self._connection, sql, params)]
 
+    def list_open_items_for_llm(self, *, limit: int = 200) -> list[ExtractedItem]:
+        return self.list_summary_items(limit=limit)
+
 
 class ReviewRepository:
     def __init__(self, connection: Connection, *, account_id: str):
@@ -1158,13 +1441,28 @@ class ReviewRepository:
                 i.rationale,
                 i.due_at,
                 i.source_refs,
-                i.metadata
+                i.metadata,
+                a.llm_action_id,
+                a.action_key,
+                a.action_type,
+                a.state AS action_state,
+                a.confidence AS action_confidence,
+                a.target_item_id,
+                a.payload AS action_payload,
+                a.source_refs AS action_source_refs,
+                a.rationale AS action_rationale,
+                a.created_at AS action_created_at,
+                a.updated_at AS action_updated_at
             FROM review_queue r
             LEFT JOIN extracted_items i
               ON i.item_id = r.item_id
              AND i.account_id = %(account_id)s
+            LEFT JOIN llm_actions a
+              ON a.llm_action_id = r.llm_action_id
+             AND a.account_id = %(account_id)s
             WHERE r.state = 'pending'
               AND (r.item_id IS NULL OR i.account_id = %(account_id)s)
+              AND (r.llm_action_id IS NULL OR a.account_id = %(account_id)s)
             ORDER BY r.created_at ASC, r.review_id ASC
             LIMIT %(limit)s
         """
@@ -1237,13 +1535,53 @@ class ReviewRepository:
         }
         _execute(self._connection, sql, params)
 
+    def enqueue_action_review(self, action: LLMAction) -> None:
+        sql = """
+            INSERT INTO review_queue (
+                item_id,
+                llm_action_id,
+                review_type,
+                state,
+                reason,
+                payload
+            )
+            VALUES (
+                %(item_id)s,
+                %(llm_action_id)s,
+                %(review_type)s,
+                %(state)s,
+                %(reason)s,
+                %(payload)s::jsonb
+            )
+        """
+        params = {
+            "item_id": action.target_item_id,
+            "llm_action_id": action.llm_action_id,
+            "review_type": action.action_type.value,
+            "state": "pending",
+            "reason": action.rationale,
+            "payload": _json_dumps(
+                {
+                    "confidence": action.confidence,
+                    "action_key": action.action_key,
+                    "action_type": action.action_type,
+                    "target_item_id": action.target_item_id,
+                }
+            ),
+        }
+        _execute(self._connection, sql, params)
+
     def approve_review(self, review_id: int) -> str:
         review = self._get_pending_review_for_update(review_id)
         if review is None:
             return "Review is no longer pending."
 
         review_type = str(_row_value(review, "review_type", 1))
-        if review_type == "item":
+        llm_action_id = _optional_row_value(review, "llm_action_id", 5, None)
+        if llm_action_id is not None:
+            self._apply_review_action(review)
+            self._mark_action_state(int(llm_action_id), LLMActionState.APPLIED)
+        elif review_type == "item":
             self._activate_review_item(str(_row_value(review, "item_id", 2)))
         elif review_type == "status_change":
             self._apply_review_status_change(review)
@@ -1254,6 +1592,7 @@ class ReviewRepository:
         return "Review approved."
 
     def reject_review(self, review_id: int) -> str:
+        self._reject_action_for_review(review_id)
         self._resolve_review(review_id, "rejected")
         return "Review rejected."
 
@@ -1264,14 +1603,26 @@ class ReviewRepository:
                 r.review_type,
                 r.item_id,
                 r.payload,
-                r.reason
+                r.reason,
+                r.llm_action_id,
+                a.action_type,
+                a.payload AS action_payload,
+                a.target_item_id,
+                a.rationale AS action_rationale,
+                a.action_key,
+                a.confidence AS action_confidence,
+                a.source_refs AS action_source_refs
             FROM review_queue r
             LEFT JOIN extracted_items i
               ON i.item_id = r.item_id
              AND i.account_id = %(account_id)s
+            LEFT JOIN llm_actions a
+              ON a.llm_action_id = r.llm_action_id
+             AND a.account_id = %(account_id)s
             WHERE r.review_id = %(review_id)s
               AND r.state = 'pending'
               AND (r.item_id IS NULL OR i.account_id = %(account_id)s)
+              AND (r.llm_action_id IS NULL OR a.account_id = %(account_id)s)
             FOR UPDATE
         """
         return _fetchone(
@@ -1343,6 +1694,134 @@ class ReviewRepository:
                 "item_id": item_id,
                 "new_status": new_status,
                 "reason": reason,
+            },
+        )
+
+    def _apply_review_action(self, review: object) -> None:
+        action_type = str(_optional_row_value(review, "action_type", 6, ""))
+        if action_type == LLMActionType.UPDATE_ITEM_STATUS.value:
+            payload = _json_object(_optional_row_value(review, "action_payload", 7, {}))
+            item_id = str(payload.get("target_item_id", _optional_row_value(review, "target_item_id", 8, "")))
+            if not item_id:
+                item_id = str(_optional_row_value(review, "item_id", 2))
+            change = {
+                "item_id": item_id,
+                "new_status": payload.get("new_status"),
+                "rationale": payload.get("rationale", _optional_row_value(review, "action_rationale", 9, "")),
+            }
+            self._apply_status_change_payload(change)
+            return
+        if action_type == LLMActionType.CREATE_ITEM.value:
+            payload = _json_object(_optional_row_value(review, "action_payload", 7, {}))
+            action_key = str(_optional_row_value(review, "action_key", 10, "") or "")
+            item_id = str(payload.get("item_id", "") or "")
+            if not item_id:
+                item_key = action_key.split(":", 1)[1] if ":" in action_key else action_key
+                item_id = f"llm-{item_key}" if item_key else f"llm-action-{_optional_row_value(review, 'llm_action_id', 5, '')}"
+            due_at = payload.get("due_at")
+            metadata = payload.get("metadata", {})
+            item = ExtractedItem(
+                item_id=item_id,
+                item_type=ItemType(str(payload.get("type"))),
+                title=str(payload.get("title", "")),
+                description=str(payload.get("description", "")),
+                confidence=float(payload.get("confidence", _optional_row_value(review, "action_confidence", 11, 0.0)) or 0.0),
+                status=ItemStatus.OPEN,
+                sources=_source_refs_from_json(_optional_row_value(review, "action_source_refs", 12, [])),
+                rationale=str(_optional_row_value(review, "action_rationale", 9, "") or ""),
+                due_at=datetime.fromisoformat(str(due_at)) if due_at else None,
+                metadata={str(key): str(value) for key, value in dict(metadata).items()} if isinstance(metadata, Mapping) else {},
+            )
+            _upsert_item(self._connection, account_id=self._account_id, item=item)
+            return
+        raise ValueError(f"Unsupported LLM action review type: {action_type}")
+
+    def _apply_status_change_payload(self, change: Mapping[str, object]) -> None:
+        item_id = str(change["item_id"])
+        new_status = _status_value(change.get("new_status", change.get("status")))
+        reason = str(change.get("rationale", change.get("reason", "")))
+        update_sql = """
+            UPDATE extracted_items
+            SET
+                status = %(new_status)s,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND item_id = %(item_id)s
+        """
+        params = {
+            "account_id": self._account_id,
+            "item_id": item_id,
+            "new_status": new_status,
+        }
+        _execute(self._connection, update_sql, params)
+
+        event_sql = """
+            INSERT INTO item_status_events (
+                item_id,
+                old_status,
+                new_status,
+                reason
+            )
+            VALUES (
+                %(item_id)s,
+                NULL,
+                %(new_status)s,
+                %(reason)s
+            )
+        """
+        _execute(
+            self._connection,
+            event_sql,
+            {
+                "item_id": item_id,
+                "new_status": new_status,
+                "reason": reason,
+            },
+        )
+
+    def _mark_action_state(self, llm_action_id: int, state: LLMActionState) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                applied_at = CASE WHEN %(state)s = 'applied' THEN NOW() ELSE applied_at END,
+                rejected_at = CASE WHEN %(state)s = 'rejected' THEN NOW() ELSE rejected_at END,
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = %(llm_action_id)s
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "llm_action_id": llm_action_id,
+                "state": state.value,
+            },
+        )
+
+    def _reject_action_for_review(self, review_id: int) -> None:
+        sql = """
+            UPDATE llm_actions
+            SET
+                state = %(state)s,
+                rejected_at = NOW(),
+                updated_at = NOW()
+            WHERE account_id = %(account_id)s
+              AND llm_action_id = (
+                  SELECT llm_action_id
+                  FROM review_queue
+                  WHERE review_id = %(review_id)s
+                    AND llm_action_id IS NOT NULL
+              )
+        """
+        _execute(
+            self._connection,
+            sql,
+            {
+                "account_id": self._account_id,
+                "review_id": review_id,
+                "state": LLMActionState.REJECTED.value,
             },
         )
 

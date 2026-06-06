@@ -88,6 +88,16 @@ class OperationsDocsTests(unittest.TestCase):
         self.assertIn("Backfill jobs do not move `last_ingested_message_id`", text)
         self.assertIn("~/.telegram/telegram_ai_assistant/postgres", text)
 
+    def test_local_runbook_documents_llm_action_layer(self):
+        text = (ROOT / "docs/operations/local-runbook.md").read_text()
+
+        self.assertIn("llm_actions", text)
+        self.assertIn("action proposals", text)
+        self.assertIn("review-first", text)
+        self.assertIn("high-confidence `create_item`", text)
+        self.assertIn("Russian", text)
+        self.assertIn("raw prompts", text)
+
 
 if __name__ == "__main__":
     unittest.main()

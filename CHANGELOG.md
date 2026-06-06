@@ -41,3 +41,4 @@
 - Added listener startup catch-up for missed messages in known chats.
 - Added bot-managed listener chat policy overrides through `/blacklist`.
 - Added bot command center shell navigation, `/cancel`, active session storage, and `task:*` callback aliases.
+- Added audited LLM action proposals with Russian user-facing output, review-first non-create actions, and bot review rendering.

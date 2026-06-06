@@ -41,6 +41,8 @@ SAFE_LOG_METADATA_KEYS = (
     "content_type",
     "content_length",
     "reasoning_content_length",
+    "action_type",
+    "source_message_count",
     "count",
     "failures",
 )
@@ -543,6 +545,18 @@ def _summary_markup() -> dict[str, object]:
 
 
 def _format_review_entries(entries: list[ReviewEntry]) -> str:
+    action_entries = [entry for entry in entries if entry.llm_action is not None]
+    legacy_entries = [entry for entry in entries if entry.llm_action is None]
+    if action_entries:
+        lines = _format_action_review_entries(action_entries)
+        if legacy_entries:
+            lines.append("Legacy reviews:")
+            lines.extend(_format_legacy_review_entries(legacy_entries)[1:])
+        return "\n".join(lines)
+    return "\n".join(_format_legacy_review_entries(entries))
+
+
+def _format_legacy_review_entries(entries: list[ReviewEntry]) -> list[str]:
     lines = ["Pending reviews:"]
     for index, entry in enumerate(entries, start=1):
         item_text = _review_entry_item_text(entry)
@@ -550,7 +564,40 @@ def _format_review_entries(entries: list[ReviewEntry]) -> str:
         confidence_text = f" confidence={confidence}" if confidence else ""
         reason = f" reason={entry.reason}" if entry.reason else ""
         lines.append(f"{index}. #{entry.review_id} {entry.review_type}{confidence_text}: {item_text}{reason}")
-    return "\n".join(lines)
+    return lines
+
+
+def _format_action_review_entries(entries: list[ReviewEntry]) -> list[str]:
+    lines = ["Pending action reviews:"]
+    grouped: dict[str, list[ReviewEntry]] = {}
+    for entry in entries:
+        source = entry.llm_action.source_refs[0] if entry.llm_action and entry.llm_action.source_refs else None
+        key = "unknown" if source is None else f"{source.chat_id}/{source.telegram_message_id}"
+        grouped.setdefault(key, []).append(entry)
+    for source_key, group_entries in grouped.items():
+        lines.append(f"Source {source_key}")
+        for index, entry in enumerate(group_entries, start=1):
+            action = entry.llm_action
+            if action is None:
+                continue
+            confidence = f"{float(action.confidence):.2f}"
+            target = f" target={action.target_item_id}" if action.target_item_id else ""
+            summary = _action_payload_summary(action.payload)
+            lines.append(
+                f"{index}. #{entry.review_id} {action.action_type.value}{target} "
+                f"confidence={confidence}: {summary} reason={action.rationale}"
+            )
+    return lines
+
+
+def _action_payload_summary(payload: Mapping[str, object]) -> str:
+    for key in ("title", "new_status", "new_value", "notification_type"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    if payload.get("field"):
+        return f"{payload.get('field')}={payload.get('new_value', '')}"
+    return "payload"
 
 
 def _review_entry_item_text(entry: ReviewEntry) -> str:

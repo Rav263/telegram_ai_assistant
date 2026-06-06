@@ -1,0 +1,86 @@
+[
+  {
+    "name": "ozon_irrigator_reminder",
+    "expected_action_types": ["create_item", "schedule_notification"],
+    "response": {
+      "actions": [
+        {
+          "type": "create_item",
+          "payload": {
+            "type": "reminder",
+            "title": "Забрать ирригатор на Озоне",
+            "description": "Завтра заехать на Озон и забрать ирригатор.",
+            "due_at": "2026-06-07T09:00:00+00:00"
+          },
+          "confidence": 0.92,
+          "source_message_ids": [200],
+          "rationale": "Сообщение содержит задачу и срок."
+        },
+        {
+          "type": "schedule_notification",
+          "payload": {
+            "due_at": "2026-06-07T09:00:00+00:00",
+            "notification_type": "reminder"
+          },
+          "confidence": 0.9,
+          "source_message_ids": [200],
+          "rationale": "Нужно напомнить о завтрашнем деле."
+        }
+      ]
+    }
+  },
+  {
+    "name": "owner_completed_existing_task",
+    "expected_action_types": ["update_item_status"],
+    "response": {
+      "actions": [
+        {
+          "type": "update_item_status",
+          "target_item_id": "item-1",
+          "payload": {
+            "new_status": "completed"
+          },
+          "confidence": 0.86,
+          "source_message_ids": [201],
+          "rationale": "Пользователь сообщил, что задача выполнена."
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate_task_mention",
+    "expected_action_types": ["merge_duplicate"],
+    "response": {
+      "actions": [
+        {
+          "type": "merge_duplicate",
+          "target_item_id": "item-1",
+          "payload": {
+            "duplicate_item_id": "item-2"
+          },
+          "confidence": 0.78,
+          "source_message_ids": [202],
+          "rationale": "Новое сообщение повторяет уже существующую задачу."
+        }
+      ]
+    }
+  },
+  {
+    "name": "link_source_to_existing_item",
+    "expected_action_types": ["link_source"],
+    "response": {
+      "actions": [
+        {
+          "type": "link_source",
+          "target_item_id": "item-3",
+          "payload": {
+            "source_message_ids": [203]
+          },
+          "confidence": 0.81,
+          "source_message_ids": [203],
+          "rationale": "Сообщение добавляет полезный источник к задаче."
+        }
+      ]
+    }
+  }
+]

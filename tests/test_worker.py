@@ -1,8 +1,17 @@
 from datetime import UTC, datetime
 import unittest
 
-from telegram_ai_assistant.domain import ExtractedItem, ItemType, Message, MessageDirection, SourceRef
+from telegram_ai_assistant.domain import (
+    ExtractedItem,
+    ItemStatus,
+    ItemType,
+    LLMActionType,
+    Message,
+    MessageDirection,
+    SourceRef,
+)
 from telegram_ai_assistant.filtering import CandidateReason, CandidateScore, CandidateScoringContext
+from telegram_ai_assistant.llm import ParsedLLMAction
 from telegram_ai_assistant.llm_client import LMStudioError
 from telegram_ai_assistant.worker import Worker, WorkerResult
 
@@ -68,8 +77,8 @@ class FakeExtractionService:
         self.error = error
         self.received_batches = []
 
-    def extract_batch(self, candidate_messages):
-        self.received_batches.append(tuple(candidate_messages))
+    def extract_batch(self, candidate_messages, *, open_items=()):
+        self.received_batches.append((tuple(candidate_messages), tuple(open_items)))
         if self.error is not None:
             raise self.error
         return self.result
@@ -87,12 +96,42 @@ class FakeReviewRepository:
     def __init__(self):
         self.items = []
         self.status_changes = []
+        self.action_reviews = []
 
     def enqueue_item(self, item):
         self.items.append(item)
 
     def enqueue_status_change(self, change):
         self.status_changes.append(change)
+
+    def enqueue_action_review(self, action):
+        self.action_reviews.append(action)
+
+
+class FakeLLMActionRepository:
+    def __init__(self):
+        self.saved = []
+        self.reviewed = []
+        self.applied = []
+
+    def save_action(self, action):
+        self.saved.append(action)
+
+    def mark_review(self, llm_action_id):
+        self.reviewed.append(llm_action_id)
+
+    def mark_applied(self, llm_action_id):
+        self.applied.append(llm_action_id)
+
+
+class FakeOpenItemRepository:
+    def __init__(self, items=()):
+        self.items = list(items)
+        self.calls = []
+
+    def list_open_items_for_llm(self, *, limit):
+        self.calls.append(("list_open_items_for_llm", limit))
+        return self.items[:limit]
 
 
 class FakeLLMRunRepository:
@@ -122,9 +161,46 @@ class FakeBackfillJobRunner:
 
 
 class ExtractionResult:
-    def __init__(self, items=(), status_changes=()):
-        self.items = tuple(items)
-        self.status_changes = tuple(status_changes)
+    def __init__(self, actions=()):
+        self.actions = tuple(actions)
+
+
+def make_action(
+    *,
+    action_type=LLMActionType.CREATE_ITEM,
+    confidence=0.91,
+    target_item_id=None,
+    payload=None,
+    source_message_ids=(200,),
+    rationale="Сообщение содержит задачу.",
+):
+    return ParsedLLMAction(
+        action_type=action_type,
+        payload=payload
+        or {
+            "type": "task",
+            "title": "Забрать ирригатор",
+            "description": "Заехать на Озон и забрать ирригатор.",
+            "due_at": "2026-06-07T09:00:00+00:00",
+        },
+        confidence=confidence,
+        source_message_ids=tuple(source_message_ids),
+        rationale=rationale,
+        target_item_id=target_item_id,
+    )
+
+
+def make_open_item():
+    return ExtractedItem(
+        item_id="item-1",
+        item_type=ItemType.TASK,
+        title="Забрать ирригатор",
+        description="Заехать на Озон.",
+        confidence=0.91,
+        status=ItemStatus.OPEN,
+        sources=(SourceRef(chat_id=100, telegram_message_id=150),),
+        rationale="Ранее найдено.",
+    )
 
 
 class WorkerTests(unittest.TestCase):
@@ -257,30 +333,30 @@ class WorkerTests(unittest.TestCase):
         self.assertNotIn("private message text", str(message_source.failed))
         self.assertEqual(message_source.processed, [good_message])
 
-    def test_extracts_high_confidence_items_and_routes_low_confidence_to_review(self):
-        high_confidence = ExtractedItem(
-            item_id="high",
-            item_type=ItemType.COMMITMENT,
-            title="Перезвонить",
-            description="Перезвонить через 30 минут",
-            confidence=0.91,
-            sources=(SourceRef(chat_id=100, telegram_message_id=200),),
-        )
-        low_confidence = ExtractedItem(
-            item_id="low",
-            item_type=ItemType.THOUGHT,
-            title="Возможно важно",
-            description="Слабый сигнал",
-            confidence=0.5,
-            sources=(SourceRef(chat_id=100, telegram_message_id=200),),
-        )
+    def test_process_candidates_persists_actions_and_applies_policy(self):
         item_repository = FakeItemRepository()
         review_repository = FakeReviewRepository()
-        candidate_repository = FakeCandidateRepository(candidate_messages=[make_message("перезвоню")])
+        action_repository = FakeLLMActionRepository()
+        open_item_repository = FakeOpenItemRepository([make_open_item()])
+        candidate_message = make_message("Завтра нужно заехать на озон, забрать ирригатор")
+        candidate_repository = FakeCandidateRepository(candidate_messages=[candidate_message])
         extraction_service = FakeExtractionService(
             result=ExtractionResult(
-                items=(high_confidence, low_confidence),
-                status_changes=({"item_id": "task-1", "confidence": 0.4},),
+                actions=(
+                    make_action(confidence=0.91),
+                    make_action(confidence=0.5, payload={
+                        "type": "thought",
+                        "title": "Возможно важно",
+                        "description": "Слабый сигнал.",
+                    }),
+                    make_action(
+                        action_type=LLMActionType.UPDATE_ITEM_STATUS,
+                        target_item_id="item-1",
+                        payload={"new_status": "completed"},
+                        confidence=0.95,
+                        rationale="Пользователь сообщил, что задача выполнена.",
+                    ),
+                )
             )
         )
         worker = Worker(
@@ -288,6 +364,9 @@ class WorkerTests(unittest.TestCase):
             extraction_service=extraction_service,
             item_repository=item_repository,
             review_repository=review_repository,
+            llm_action_repository=action_repository,
+            open_item_repository=open_item_repository,
+            open_item_context_limit=200,
             item_auto_apply_threshold=0.8,
             status_auto_apply_threshold=0.8,
         )
@@ -295,10 +374,43 @@ class WorkerTests(unittest.TestCase):
         result = worker.process_candidates(limit=10)
 
         self.assertEqual(result.extracted_items, 2)
-        self.assertEqual(item_repository.saved, [high_confidence])
-        self.assertEqual(review_repository.items, [low_confidence])
-        self.assertEqual(len(review_repository.status_changes), 1)
-        self.assertEqual(candidate_repository.acknowledged, [make_message("перезвоню")])
+        self.assertEqual(len(item_repository.saved), 1)
+        self.assertEqual(item_repository.saved[0].title, "Забрать ирригатор")
+        self.assertEqual(len(action_repository.saved), 3)
+        self.assertEqual(len(action_repository.applied), 1)
+        self.assertEqual(len(action_repository.reviewed), 2)
+        self.assertEqual(len(review_repository.action_reviews), 2)
+        self.assertEqual(review_repository.action_reviews[1].action_type, LLMActionType.UPDATE_ITEM_STATUS)
+        self.assertEqual(candidate_repository.acknowledged, [candidate_message])
+        self.assertEqual(extraction_service.received_batches, [((candidate_message,), (make_open_item(),))])
+        self.assertEqual(open_item_repository.calls, [("list_open_items_for_llm", 200)])
+
+    def test_process_candidates_records_malformed_action_source_without_crashing(self):
+        item_repository = FakeItemRepository()
+        action_repository = FakeLLMActionRepository()
+        runtime_events = FakeRuntimeEventRepository()
+        candidate_message = make_message("Завтра нужно заехать на озон, забрать ирригатор")
+        candidate_repository = FakeCandidateRepository(candidate_messages=[candidate_message])
+        worker = Worker(
+            candidate_repository=candidate_repository,
+            extraction_service=FakeExtractionService(
+                result=ExtractionResult(actions=(make_action(source_message_ids=(999,)),))
+            ),
+            item_repository=item_repository,
+            llm_action_repository=action_repository,
+            runtime_event_repository=runtime_events,
+        )
+
+        result = worker.process_candidates(limit=10)
+
+        self.assertEqual(result.processed_candidates, 1)
+        self.assertEqual(result.failures, 1)
+        self.assertEqual(item_repository.saved, [])
+        self.assertEqual(action_repository.saved, [])
+        self.assertEqual(candidate_repository.acknowledged, [candidate_message])
+        self.assertEqual(runtime_events.events[0]["event_type"], "llm_action_failure")
+        self.assertEqual(runtime_events.events[0]["metadata"]["error_type"], "KeyError")
+        self.assertNotIn("Завтра", str(runtime_events.events))
 
     def test_records_lm_failure_without_acknowledging_candidate(self):
         candidate_repository = FakeCandidateRepository(candidate_messages=[make_message("перезвоню")])

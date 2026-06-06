@@ -10,6 +10,9 @@ from telegram_ai_assistant.domain import (
     ExtractedItem,
     ItemStatus,
     ItemType,
+    LLMAction,
+    LLMActionState,
+    LLMActionType,
     ReviewEntry,
     RuntimeEvent,
     SourceRef,
@@ -198,6 +201,31 @@ def make_task(
     )
 
 
+def make_llm_action_review() -> ReviewEntry:
+    created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    return ReviewEntry(
+        review_id=77,
+        review_type="update_item_status",
+        state="pending",
+        reason="Пользователь сообщил, что задача выполнена.",
+        payload={"confidence": 0.82},
+        created_at=created_at,
+        llm_action=LLMAction(
+            llm_action_id=11,
+            action_key="status-abc",
+            action_type=LLMActionType.UPDATE_ITEM_STATUS,
+            state=LLMActionState.REVIEW,
+            confidence=0.82,
+            target_item_id="item-1",
+            payload={"new_status": "completed"},
+            source_refs=(SourceRef(chat_id=100, telegram_message_id=200),),
+            rationale="Пользователь сообщил, что задача выполнена.",
+            created_at=created_at,
+            updated_at=created_at,
+        ),
+    )
+
+
 def make_backfill_record(
     *,
     backfill_job_id=7,
@@ -315,6 +343,34 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("content_length=0", text)
         self.assertIn("reasoning_content_length=120", text)
         self.assertNotIn("raw private text", text)
+
+    def test_logs_includes_allowlisted_llm_action_failure_metadata(self):
+        repository = FakeRuntimeEventRepository(
+            events=[
+                RuntimeEvent(
+                    runtime_event_id=12,
+                    component="worker",
+                    severity="warning",
+                    event_type="llm_action_failure",
+                    message="raw private action text",
+                    metadata={
+                        "error_type": "KeyError",
+                        "action_type": "create_item",
+                        "source_message_count": 1,
+                        "raw": "secret",
+                    },
+                    created_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
+                )
+            ]
+        )
+
+        text = BotServices(runtime_event_repository=repository).logs()
+
+        self.assertIn("llm_action_failure", text)
+        self.assertIn("action_type=create_item", text)
+        self.assertIn("source_message_count=1", text)
+        self.assertNotIn("raw private action text", text)
+        self.assertNotIn("secret", text)
 
     def test_health_formats_component_statuses(self):
         def health_report():
@@ -542,6 +598,30 @@ class BotServicesTests(unittest.TestCase):
             [
                 {"text": "Approve 1", "callback_data": "review:approve:7"},
                 {"text": "Reject 1", "callback_data": "review:reject:7"},
+            ],
+        )
+
+    def test_review_groups_llm_action_reviews_by_source_message(self):
+        repository = FakeReviewRepository([make_llm_action_review()])
+        services = BotServices(
+            runtime_event_repository=FakeRuntimeEventRepository(),
+            review_repository=repository,
+        )
+
+        response = services.review()
+
+        self.assertIn("Pending action reviews:", response.text)
+        self.assertIn("Source 100/200", response.text)
+        self.assertIn("update_item_status", response.text)
+        self.assertIn("item-1", response.text)
+        self.assertIn("completed", response.text)
+        self.assertIn("confidence=0.82", response.text)
+        self.assertIn("Пользователь сообщил", response.text)
+        self.assertEqual(
+            response.reply_markup["inline_keyboard"][0],
+            [
+                {"text": "Approve 1", "callback_data": "review:approve:77"},
+                {"text": "Reject 1", "callback_data": "review:reject:77"},
             ],
         )
 

@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from .domain import ItemStatus, ItemType
+from .domain import LLMActionType
 
 
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -14,19 +14,19 @@ DEFAULT_MAX_TOKENS = 8192
 EXTRACTION_RESPONSE_FORMAT = {
     "type": "json_schema",
     "json_schema": {
-        "name": "telegram_extraction_response",
+        "name": "telegram_action_response",
         "strict": True,
         "schema": {
             "type": "object",
             "properties": {
-                "items": {
+                "actions": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "type": {"type": "string", "enum": [item_type.value for item_type in ItemType]},
-                            "title": {"type": "string"},
-                            "description": {"type": "string"},
+                            "type": {"type": "string", "enum": [action_type.value for action_type in LLMActionType]},
+                            "target_item_id": {"type": ["string", "null"]},
+                            "payload": {"type": "object"},
                             "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                             "source_message_ids": {
                                 "type": "array",
@@ -36,35 +36,8 @@ EXTRACTION_RESPONSE_FORMAT = {
                         },
                         "required": [
                             "type",
-                            "title",
-                            "description",
-                            "confidence",
-                            "source_message_ids",
-                            "rationale",
-                        ],
-                        "additionalProperties": False,
-                    },
-                },
-                "status_changes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "item_id": {"type": "string"},
-                            "new_status": {
-                                "type": "string",
-                                "enum": [status.value for status in ItemStatus],
-                            },
-                            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                            "source_message_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                            },
-                            "rationale": {"type": "string"},
-                        },
-                        "required": [
-                            "item_id",
-                            "new_status",
+                            "target_item_id",
+                            "payload",
                             "confidence",
                             "source_message_ids",
                             "rationale",
@@ -73,7 +46,7 @@ EXTRACTION_RESPONSE_FORMAT = {
                     },
                 },
             },
-            "required": ["items", "status_changes"],
+            "required": ["actions"],
             "additionalProperties": False,
         },
     },

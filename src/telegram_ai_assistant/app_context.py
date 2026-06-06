@@ -20,6 +20,7 @@ from .db.repositories import (
     ChatQueryRepository,
     ItemRepository,
     ItemQueryRepository,
+    LLMActionRepository,
     LLMRunRepository,
     MessageProcessingRepository,
     ReviewRepository,
@@ -203,6 +204,15 @@ class AppContext:
                     connection,
                     account_id=self.settings.telegram_ingest_account_id,
                 ),
+                llm_action_repository=LLMActionRepository(
+                    connection,
+                    account_id=self.settings.telegram_ingest_account_id,
+                ),
+                open_item_repository=ItemQueryRepository(
+                    connection,
+                    account_id=self.settings.telegram_ingest_account_id,
+                ),
+                open_item_context_limit=200,
                 llm_run_repository=LLMRunRepository(connection),
                 runtime_event_repository=RuntimeEventRepository(connection),
                 item_auto_apply_threshold=self.settings.worker_item_auto_apply_threshold,

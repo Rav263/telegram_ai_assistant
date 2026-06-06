@@ -12,6 +12,7 @@ from telegram_ai_assistant.db.repositories import (
     ChatPolicyRepository,
     ChatQueryRepository,
     ItemRepository,
+    LLMActionRepository,
     LLMRunRepository,
     BotRuntimeStateRepository,
     ItemQueryRepository,
@@ -29,6 +30,9 @@ from telegram_ai_assistant.domain import (
     ExtractedItem,
     ItemStatus,
     ItemType,
+    LLMAction,
+    LLMActionState,
+    LLMActionType,
     Message,
     MessageDirection,
     ReviewEntry,
@@ -105,6 +109,42 @@ def make_item(confidence: float = 0.91) -> ExtractedItem:
         status=ItemStatus.OPEN,
         rationale="Owner committed to call back.",
         metadata={"topic": "calls"},
+    )
+
+
+def make_llm_action(
+    *,
+    llm_action_id: int | None = None,
+    action_key: str = "create-item-abc",
+    action_type: LLMActionType = LLMActionType.CREATE_ITEM,
+    state: LLMActionState = LLMActionState.PENDING,
+    confidence: float = 0.91,
+    target_item_id: str | None = None,
+    payload: dict[str, object] | None = None,
+    source_refs: tuple[SourceRef, ...] = (SourceRef(chat_id=100, telegram_message_id=200),),
+    rationale: str = "Сообщение содержит задачу.",
+    created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+) -> LLMAction:
+    now = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+    return LLMAction(
+        llm_action_id=llm_action_id,
+        action_key=action_key,
+        action_type=action_type,
+        state=state,
+        confidence=confidence,
+        target_item_id=target_item_id,
+        payload=payload
+        or {
+            "type": "task",
+            "title": "Забрать ирригатор",
+            "description": "Заехать на Озон и забрать ирригатор.",
+            "due_at": "2026-06-07T09:00:00+00:00",
+        },
+        source_refs=source_refs,
+        rationale=rationale,
+        created_at=created_at or now,
+        updated_at=updated_at or now,
     )
 
 
@@ -738,6 +778,70 @@ class ReviewRepositoryTests(unittest.TestCase):
             "partially_completed",
         )
 
+    def test_enqueue_action_review_stores_action_reference(self):
+        connection = RecordingConnection()
+        action = make_llm_action(
+            llm_action_id=11,
+            action_type=LLMActionType.UPDATE_ITEM_STATUS,
+            target_item_id="item-1",
+            payload={"new_status": "completed"},
+        )
+
+        ReviewRepository(connection, account_id="main").enqueue_action_review(action)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("insert into review_queue", normalized_sql)
+        self.assertIn("llm_action_id", normalized_sql)
+        self.assertEqual(params["llm_action_id"], 11)
+        self.assertEqual(params["item_id"], "item-1")
+        self.assertEqual(params["review_type"], "update_item_status")
+        self.assertEqual(params["reason"], "Сообщение содержит задачу.")
+
+    def test_list_pending_reviews_includes_action_data(self):
+        connection = RecordingConnection()
+        created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchall_result = [
+            {
+                "review_id": 9,
+                "review_type": "update_item_status",
+                "state": "pending",
+                "reason": "Пользователь сообщил, что задача выполнена.",
+                "payload": {"confidence": 0.82},
+                "created_at": created_at,
+                "item_id": None,
+                "item_type": None,
+                "title": None,
+                "description": None,
+                "confidence": None,
+                "status": None,
+                "rationale": None,
+                "due_at": None,
+                "source_refs": None,
+                "metadata": None,
+                "llm_action_id": 11,
+                "action_key": "status-abc",
+                "action_type": "update_item_status",
+                "action_state": "review",
+                "action_confidence": 0.82,
+                "target_item_id": "item-1",
+                "action_payload": {"new_status": "completed"},
+                "action_source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+                "action_rationale": "Пользователь сообщил, что задача выполнена.",
+                "action_created_at": created_at,
+                "action_updated_at": created_at,
+            }
+        ]
+
+        entries = ReviewRepository(connection, account_id="main").list_pending_reviews(limit=5)
+
+        sql, _params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("left join llm_actions", normalized_sql)
+        self.assertEqual(entries[0].llm_action.llm_action_id, 11)
+        self.assertEqual(entries[0].llm_action.action_type, LLMActionType.UPDATE_ITEM_STATUS)
+        self.assertEqual(entries[0].llm_action.target_item_id, "item-1")
+
     def test_approve_item_review_activates_item_and_marks_review_approved(self):
         connection = RecordingConnection()
         connection.cursor_obj.fetchone_result = {
@@ -779,14 +883,76 @@ class ReviewRepositoryTests(unittest.TestCase):
         self.assertEqual(connection.statements[1][1]["new_status"], "completed")
         self.assertEqual(connection.statements[3][1]["state"], "approved")
 
+    def test_approve_action_review_applies_status_action_and_marks_action_applied(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = {
+            "review_id": 10,
+            "review_type": "update_item_status",
+            "item_id": "item-1",
+            "payload": {"new_status": "completed"},
+            "reason": "Пользователь сообщил, что задача выполнена.",
+            "llm_action_id": 11,
+            "action_type": "update_item_status",
+            "action_payload": {"new_status": "completed"},
+            "target_item_id": "item-1",
+            "action_rationale": "Пользователь сообщил, что задача выполнена.",
+        }
+
+        result = ReviewRepository(connection, account_id="main").approve_review(10)
+
+        statements = [compact_sql(sql).lower() for sql, _ in connection.statements]
+        self.assertEqual(result, "Review approved.")
+        self.assertIn("update extracted_items", statements[1])
+        self.assertIn("update llm_actions", statements[3])
+        self.assertIn("update review_queue", statements[4])
+        self.assertEqual(connection.statements[3][1]["state"], "applied")
+        self.assertEqual(connection.statements[4][1]["state"], "approved")
+
+    def test_approve_create_action_review_creates_item_from_action_payload(self):
+        connection = RecordingConnection()
+        connection.cursor_obj.fetchone_result = {
+            "review_id": 12,
+            "review_type": "create_item",
+            "item_id": None,
+            "payload": {},
+            "reason": "Нужно создать задачу.",
+            "llm_action_id": 21,
+            "action_type": "create_item",
+            "action_key": "create_item:abc123",
+            "action_confidence": 0.42,
+            "action_payload": {
+                "type": "task",
+                "title": "Забрать ирригатор",
+                "description": "Заехать на Озон и забрать ирригатор.",
+                "due_at": "2026-06-07T09:00:00+00:00",
+            },
+            "action_source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+            "action_rationale": "Нужно создать задачу.",
+        }
+
+        result = ReviewRepository(connection, account_id="main").approve_review(12)
+
+        statements = [compact_sql(sql).lower() for sql, _ in connection.statements]
+        self.assertEqual(result, "Review approved.")
+        self.assertIn("insert into extracted_items", statements[1])
+        self.assertIn("update llm_actions", statements[2])
+        self.assertIn("update review_queue", statements[3])
+        item_params = connection.statements[1][1]
+        self.assertEqual(item_params["item_id"], "llm-abc123")
+        self.assertEqual(item_params["confidence"], 0.42)
+        self.assertEqual(item_params["due_at"], datetime(2026, 6, 7, 9, 0, tzinfo=UTC))
+        self.assertEqual(json.loads(item_params["source_refs"]), [{"chat_id": 100, "telegram_message_id": 200}])
+        self.assertEqual(connection.statements[2][1]["state"], "applied")
+        self.assertEqual(connection.statements[3][1]["state"], "approved")
+
     def test_reject_review_marks_review_rejected_without_item_update(self):
         connection = RecordingConnection()
 
         result = ReviewRepository(connection, account_id="main").reject_review(9)
 
         self.assertEqual(result, "Review rejected.")
-        self.assertEqual(len(connection.statements), 1)
-        sql, params = connection.statements[0]
+        self.assertEqual(len(connection.statements), 2)
+        sql, params = connection.statements[1]
         self.assertIn("update review_queue", compact_sql(sql).lower())
         self.assertEqual(params["review_id"], 9)
         self.assertEqual(params["state"], "rejected")
@@ -1243,6 +1409,129 @@ class BotSessionRepositoryTests(unittest.TestCase):
         self.assertIn("delete from bot_sessions", normalized_sql)
         self.assertIn("expires_at <= %(now)s", normalized_sql)
         self.assertEqual(params["now"], now)
+
+
+class LLMActionRepositoryTests(unittest.TestCase):
+    def test_action_key_is_stable_for_normalized_payload(self):
+        first = repositories.llm_action_key(
+            action_type=LLMActionType.CREATE_ITEM,
+            source_refs=(SourceRef(chat_id=100, telegram_message_id=200),),
+            target_item_id=None,
+            payload={"title": "Забрать ирригатор", "metadata": {"b": "2", "a": "1"}},
+        )
+        second = repositories.llm_action_key(
+            action_type=LLMActionType.CREATE_ITEM,
+            source_refs=(SourceRef(chat_id=100, telegram_message_id=200),),
+            target_item_id=None,
+            payload={"metadata": {"a": "1", "b": "2"}, "title": "Забрать ирригатор"},
+        )
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("create_item:"))
+
+    def test_save_action_upserts_by_action_key(self):
+        connection = RecordingConnection()
+        action = make_llm_action()
+
+        LLMActionRepository(connection, account_id="main").save_action(action)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("insert into llm_actions", normalized_sql)
+        self.assertIn("on conflict (action_key)", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["action_key"], "create-item-abc")
+        self.assertEqual(params["action_type"], "create_item")
+        self.assertEqual(params["state"], "pending")
+        self.assertEqual(params["confidence"], 0.91)
+        self.assertIsNone(params["target_item_id"])
+        self.assertEqual(json.loads(params["payload"])["title"], "Забрать ирригатор")
+        self.assertEqual(
+            json.loads(params["source_refs"]),
+            [{"chat_id": 100, "telegram_message_id": 200}],
+        )
+
+    def test_get_by_key_returns_action(self):
+        connection = RecordingConnection()
+        created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchone_result = {
+            "llm_action_id": 11,
+            "action_key": "create-item-abc",
+            "action_type": "create_item",
+            "state": "pending",
+            "confidence": 0.91,
+            "target_item_id": None,
+            "payload": {"title": "Забрать ирригатор"},
+            "source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+            "rationale": "Сообщение содержит задачу.",
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+
+        action = LLMActionRepository(connection, account_id="main").get_by_key("create-item-abc")
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from llm_actions", normalized_sql)
+        self.assertIn("action_key = %(action_key)s", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertEqual(params["account_id"], "main")
+        self.assertEqual(params["action_key"], "create-item-abc")
+        self.assertEqual(action.llm_action_id, 11)
+        self.assertEqual(action.action_type, LLMActionType.CREATE_ITEM)
+        self.assertEqual(action.state, LLMActionState.PENDING)
+        self.assertEqual(action.source_refs, (SourceRef(chat_id=100, telegram_message_id=200),))
+
+    def test_list_pending_review_actions_reads_review_state_rows(self):
+        connection = RecordingConnection()
+        created_at = datetime(2026, 6, 6, 10, 0, tzinfo=UTC)
+        connection.cursor_obj.fetchall_result = [
+            {
+                "llm_action_id": 11,
+                "action_key": "status-abc",
+                "action_type": "update_item_status",
+                "state": "review",
+                "confidence": 0.82,
+                "target_item_id": "item-1",
+                "payload": {"target_item_id": "item-1", "new_status": "completed"},
+                "source_refs": [{"chat_id": 100, "telegram_message_id": 200}],
+                "rationale": "Пользователь сообщил, что задача выполнена.",
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
+        ]
+
+        actions = LLMActionRepository(connection, account_id="main").list_pending_review_actions(limit=5)
+
+        sql, params = connection.statements[0]
+        normalized_sql = compact_sql(sql).lower()
+        self.assertIn("from llm_actions", normalized_sql)
+        self.assertIn("account_id = %(account_id)s", normalized_sql)
+        self.assertIn("state = %(state)s", normalized_sql)
+        self.assertIn("order by created_at asc, llm_action_id asc", normalized_sql)
+        self.assertEqual(params["state"], "review")
+        self.assertEqual(params["limit"], 5)
+        self.assertEqual(actions[0].action_type, LLMActionType.UPDATE_ITEM_STATUS)
+        self.assertEqual(actions[0].target_item_id, "item-1")
+
+    def test_state_transition_helpers_update_expected_fields(self):
+        connection = RecordingConnection()
+        repository = LLMActionRepository(connection, account_id="main")
+
+        repository.mark_review(11)
+        repository.mark_applied(11)
+        repository.mark_rejected(11)
+        repository.mark_failed(11, error_type="ValidationError")
+
+        statements = [compact_sql(sql).lower() for sql, _ in connection.statements]
+        self.assertIn("update llm_actions", statements[0])
+        self.assertEqual(connection.statements[0][1]["state"], "review")
+        self.assertIn("applied_at = now()", statements[1])
+        self.assertEqual(connection.statements[1][1]["state"], "applied")
+        self.assertIn("rejected_at = now()", statements[2])
+        self.assertEqual(connection.statements[2][1]["state"], "rejected")
+        self.assertEqual(connection.statements[3][1]["state"], "failed")
+        self.assertEqual(connection.statements[3][1]["error_type"], "ValidationError")
 
 
 class BotRuntimeStateRepositoryTests(unittest.TestCase):

@@ -28,6 +28,7 @@ class DBSchemaTests(unittest.TestCase):
             "item_status_events",
             "review_queue",
             "llm_runs",
+            "llm_actions",
             "runtime_events",
             "backfill_jobs",
             "bot_actions",
@@ -155,6 +156,57 @@ class DBSchemaTests(unittest.TestCase):
         )
         self.assertIn(
             "alter table review_queue alter column item_id drop not null",
+            schema,
+        )
+
+    def test_llm_actions_store_audited_action_proposals(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertIn("create table if not exists llm_actions", schema)
+        self.assertRegex(schema, r"llm_action_id\s+bigserial\s+primary\s+key")
+        self.assertRegex(schema, r"account_id\s+text\s+not\s+null\s+references\s+accounts\(account_id\)")
+        self.assertRegex(schema, r"action_key\s+text\s+not\s+null\s+unique")
+        self.assertRegex(schema, r"action_type\s+text\s+not\s+null")
+        self.assertRegex(schema, r"state\s+text\s+not\s+null")
+        self.assertRegex(schema, r"confidence\s+numeric\(5,\s*4\)\s+not\s+null")
+        self.assertRegex(schema, r"target_item_id\s+text")
+        self.assertIn("payload jsonb not null default '{}'::jsonb", schema)
+        self.assertIn("source_refs jsonb not null default '[]'::jsonb", schema)
+        self.assertIn("rationale text not null default ''", schema)
+        self.assertRegex(schema, r"applied_at\s+timestamptz")
+        self.assertRegex(schema, r"rejected_at\s+timestamptz")
+        self.assertIn(
+            "create index if not exists idx_llm_actions_state_created_at on llm_actions(state, created_at, llm_action_id)",
+            schema,
+        )
+        self.assertIn(
+            "create index if not exists idx_llm_actions_target_item_id on llm_actions(target_item_id)",
+            schema,
+        )
+
+    def test_review_queue_can_reference_llm_actions(self):
+        self.assertTrue(SCHEMA_PATH.exists(), "schema.sql must exist")
+        schema = re.sub(
+            r"\s+",
+            " ",
+            SCHEMA_PATH.read_text(encoding="utf-8").lower(),
+        )
+
+        self.assertRegex(
+            schema,
+            r"llm_action_id\s+bigint\s+references\s+llm_actions\(llm_action_id\)",
+        )
+        self.assertIn(
+            "alter table review_queue add column if not exists llm_action_id bigint",
+            schema,
+        )
+        self.assertIn(
+            "create index if not exists idx_review_queue_llm_action_id on review_queue(llm_action_id)",
             schema,
         )
 

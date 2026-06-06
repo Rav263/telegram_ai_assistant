@@ -58,7 +58,7 @@ LOG_LEVEL=INFO
 
 ## Services
 
-- Postgres stores messages, candidates, extracted items, status events, bot actions, and backfill jobs.
+- Postgres stores messages, candidates, extracted items, status events, LLM action proposals in `llm_actions`, bot actions, and backfill jobs.
 - LM Studio serves the local OpenAI-compatible LLM endpoint.
 - `telegram-ai-assistant run ingestor` reads Telegram updates through the read-only ingestion adapter.
 - `telegram-ai-assistant run listener` saves new Telegram messages from live updates.
@@ -122,7 +122,7 @@ Keep `run ingestor` available for controlled single-chat debugging, but normal m
 
 ## Worker
 
-Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves high-confidence extracted items, queues low-confidence reviews, and prints JSON counts.
+Use `telegram-ai-assistant run worker --once` for local debugging. It reads pending stored messages, writes `message_candidates`, processes queued candidates through LM Studio, saves audited action proposals to `llm_actions`, applies only high-confidence `create_item` actions automatically, queues review-first non-create actions, and prints JSON counts.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker --once
@@ -140,6 +140,10 @@ Worker tuning variables:
 - `WORKER_POLL_INTERVAL_SECONDS` controls daemon sleep, defaulting to 10.
 - `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
 - `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
+
+LLM extraction now proposes actions instead of directly mutating existing items. Supported action proposals include creating items, updating item status or fields, merging duplicates, scheduling notifications, and linking sources to existing items. User-facing task, reminder, review, and rationale text from the LLM must be Russian. The worker stores every proposal in `llm_actions` with source references, confidence, payload, state, and rationale before applying or routing it.
+
+The initial policy is deliberately conservative: high-confidence `create_item` proposals may be applied automatically, while status changes, field edits, duplicate merges, notification scheduling, and source links go to review-first handling. Failed actions are marked failed instead of being retried blindly or hidden.
 
 app-worker does not open the Telegram user session for backfill. It only processes messages already saved by the listener, ingestor, or explicit backfill command.
 
@@ -164,7 +168,7 @@ Implemented production commands:
 - `/start` and `/help` show the command list and inline menu.
 - `/cancel` clears the current active bot flow for the owner and chat.
 - `/summary` shows a structured summary from stored extracted items.
-- `/review` lists pending low-confidence reviews and supports approve/reject callbacks.
+- `/review` lists pending low-confidence reviews and LLM action proposals, grouped by source message where possible, and supports approve/reject callbacks.
 - `/tasks` lists open task-like items and includes inline buttons to mark each item completed, partially completed, or cancelled.
 - `/logs` shows sanitized warning/error runtime events.
 - `/health` shows Postgres and LM Studio health.

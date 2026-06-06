@@ -108,9 +108,27 @@ CREATE TABLE IF NOT EXISTS item_status_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS llm_actions (
+    llm_action_id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+    action_key TEXT NOT NULL UNIQUE,
+    action_type TEXT NOT NULL,
+    state TEXT NOT NULL,
+    confidence NUMERIC(5, 4) NOT NULL,
+    target_item_id TEXT,
+    payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+    source_refs JSONB NOT NULL DEFAULT '[]'::JSONB,
+    rationale TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    applied_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS review_queue (
     review_id BIGSERIAL PRIMARY KEY,
     item_id TEXT REFERENCES extracted_items(item_id) ON DELETE CASCADE,
+    llm_action_id BIGINT REFERENCES llm_actions(llm_action_id) ON DELETE SET NULL,
     review_type TEXT NOT NULL DEFAULT 'item',
     state TEXT NOT NULL DEFAULT 'pending',
     reason TEXT NOT NULL DEFAULT '',
@@ -124,6 +142,9 @@ ALTER TABLE review_queue
 
 ALTER TABLE review_queue
     ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE review_queue
+    ADD COLUMN IF NOT EXISTS llm_action_id BIGINT;
 
 ALTER TABLE review_queue
     ALTER COLUMN item_id DROP NOT NULL;
@@ -227,6 +248,15 @@ CREATE INDEX IF NOT EXISTS idx_message_candidates_status
 
 CREATE INDEX IF NOT EXISTS idx_extracted_items_status
     ON extracted_items(status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_llm_actions_state_created_at
+    ON llm_actions(state, created_at, llm_action_id);
+
+CREATE INDEX IF NOT EXISTS idx_llm_actions_target_item_id
+    ON llm_actions(target_item_id);
+
+CREATE INDEX IF NOT EXISTS idx_review_queue_llm_action_id
+    ON review_queue(llm_action_id);
 
 CREATE INDEX IF NOT EXISTS idx_runtime_events_severity_created_at
     ON runtime_events(severity, created_at DESC, runtime_event_id DESC);

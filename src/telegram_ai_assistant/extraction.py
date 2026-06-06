@@ -3,10 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 import json
-from typing import Any
 
-from .domain import ExtractedItem, Message, SourceRef
-from .llm import ParsedExtractionItem, ParsedExtractionResponse, parse_extraction_response
+from .domain import ExtractedItem, Message
+from .llm import ParsedActionResponse, ParsedLLMAction, parse_action_response
 
 
 class ExtractionError(ValueError):
@@ -15,23 +14,31 @@ class ExtractionError(ValueError):
 
 @dataclass(frozen=True)
 class ExtractionBatchResult:
-    items: tuple[ExtractedItem, ...]
-    status_changes: tuple[dict[str, Any], ...]
+    actions: tuple[ParsedLLMAction, ...]
 
 
 class ExtractionService:
     def __init__(self, *, llm_client: object) -> None:
         self._llm_client = llm_client
 
-    def extract_batch(self, candidate_messages: Sequence[Message]) -> ExtractionBatchResult:
-        prompt = build_extraction_prompt(candidate_messages)
+    def extract_batch(
+        self,
+        candidate_messages: Sequence[Message],
+        *,
+        open_items: Sequence[ExtractedItem] = (),
+    ) -> ExtractionBatchResult:
+        prompt = build_extraction_prompt(candidate_messages, open_items=open_items)
         raw_json = self._llm_client.extract_json(messages=prompt)
-        parsed = parse_extraction_response(raw_json)
-        return parsed_response_to_extraction_result(parsed, candidate_messages)
+        parsed = parse_action_response(raw_json)
+        return parsed_response_to_extraction_result(parsed)
 
 
-def build_extraction_prompt(candidate_messages: Sequence[Message]) -> tuple[dict[str, str], ...]:
-    records = [
+def build_extraction_prompt(
+    candidate_messages: Sequence[Message],
+    *,
+    open_items: Sequence[ExtractedItem] = (),
+) -> tuple[dict[str, str], ...]:
+    message_records = [
         {
             "account_id": message.account_id,
             "chat_id": message.chat_id,
@@ -44,62 +51,51 @@ def build_extraction_prompt(candidate_messages: Sequence[Message]) -> tuple[dict
         }
         for message in candidate_messages
     ]
+    item_records = [
+        {
+            "item_id": item.item_id,
+            "type": item.item_type.value,
+            "title": item.title,
+            "status": item.status.value,
+            "due_at": item.due_at.isoformat() if item.due_at is not None else None,
+            "source_refs": [
+                {
+                    "chat_id": source.chat_id,
+                    "telegram_message_id": source.telegram_message_id,
+                }
+                for source in item.sources
+            ],
+        }
+        for item in open_items
+    ]
     return (
         {
             "role": "system",
             "content": (
-                "Extract tasks, thoughts, commitments, reminders, waiting-for items, "
-                "and useful context from Telegram messages. Return only valid JSON with "
-                "items and status_changes arrays. Each item must include type, title, "
-                "description, confidence, source_message_ids, and rationale."
+                "Propose actions only. Return valid JSON with a top-level actions array. "
+                "Actions may be create_item, update_item_status, update_item_field, "
+                "merge_duplicate, schedule_notification, or link_source. "
+                "All user-facing generated text must be Russian. Internal JSON keys and enum values stay English. "
+                "Never claim that a database update already happened. Prefer updating or linking existing open items "
+                "over creating duplicates. Status updates require explicit evidence from owner messages or clear context. "
+                "For example, 'Завтра нужно заехать на озон, забрать ирригатор' should propose create_item "
+                "and schedule_notification. Completion messages like 'Сделал', 'забрал', or 'отправил' near an "
+                "existing item should propose update_item_status."
             ),
         },
         {
             "role": "user",
-            "content": "Messages:\n" + json.dumps(records, ensure_ascii=False, indent=2),
+            "content": (
+                "Candidate messages:\n"
+                + json.dumps(message_records, ensure_ascii=False, indent=2)
+                + "\nOpen items:\n"
+                + json.dumps(item_records, ensure_ascii=False, indent=2)
+            ),
         },
     )
 
 
 def parsed_response_to_extraction_result(
-    parsed: ParsedExtractionResponse,
-    source_messages: Sequence[Message],
+    parsed: ParsedActionResponse,
 ) -> ExtractionBatchResult:
-    items = tuple(
-        parsed_item_to_extracted_item(index, item, source_messages)
-        for index, item in enumerate(parsed.items, start=1)
-    )
-    return ExtractionBatchResult(items=items, status_changes=parsed.status_changes)
-
-
-def parsed_item_to_extracted_item(
-    index: int,
-    parsed_item: ParsedExtractionItem,
-    source_messages: Sequence[Message],
-) -> ExtractedItem:
-    source_refs = _source_refs(parsed_item.source_message_ids, source_messages)
-    return ExtractedItem(
-        item_id=_item_id(index, parsed_item),
-        item_type=parsed_item.item_type,
-        title=parsed_item.title,
-        description=parsed_item.description,
-        confidence=parsed_item.confidence,
-        sources=source_refs,
-        rationale=parsed_item.rationale,
-    )
-
-
-def _source_refs(source_message_ids: Sequence[int], source_messages: Sequence[Message]) -> tuple[SourceRef, ...]:
-    by_message_id = {message.telegram_message_id: message for message in source_messages}
-    refs = []
-    for message_id in source_message_ids:
-        message = by_message_id.get(message_id)
-        if message is None:
-            raise ExtractionError(f"source message id {message_id} was not provided")
-        refs.append(SourceRef(chat_id=message.chat_id, telegram_message_id=message.telegram_message_id))
-    return tuple(refs)
-
-
-def _item_id(index: int, parsed_item: ParsedExtractionItem) -> str:
-    source_part = "-".join(str(message_id) for message_id in parsed_item.source_message_ids) or "unknown"
-    return f"llm-{index}-{parsed_item.item_type.value}-{source_part}"
+    return ExtractionBatchResult(actions=parsed.actions)

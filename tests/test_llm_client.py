@@ -31,7 +31,7 @@ class LMStudioClientTests(unittest.TestCase):
                     "choices": [
                         {
                             "message": {
-                                "content": '{"items": [], "status_changes": []}',
+                                "content": '{"actions": []}',
                             }
                         }
                     ]
@@ -46,7 +46,7 @@ class LMStudioClientTests(unittest.TestCase):
 
         content = client.extract_json(messages=[{"role": "user", "content": "extract"}])
 
-        self.assertEqual(content, '{"items": [], "status_changes": []}')
+        self.assertEqual(content, '{"actions": []}')
         self.assertEqual(len(seen_requests), 1)
         request = seen_requests[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:1234/v1/chat/completions")
@@ -61,12 +61,16 @@ class LMStudioClientTests(unittest.TestCase):
         response_format = body["response_format"]
         self.assertEqual(response_format["type"], "json_schema")
         json_schema = response_format["json_schema"]
-        self.assertEqual(json_schema["name"], "telegram_extraction_response")
+        self.assertEqual(json_schema["name"], "telegram_action_response")
         self.assertTrue(json_schema["strict"])
         schema = json_schema["schema"]
-        self.assertEqual(schema["required"], ["items", "status_changes"])
+        self.assertEqual(schema["required"], ["actions"])
         self.assertFalse(schema["additionalProperties"])
-        self.assertIn("task", schema["properties"]["items"]["items"]["properties"]["type"]["enum"])
+        action_schema = schema["properties"]["actions"]["items"]
+        self.assertIn("create_item", action_schema["properties"]["type"]["enum"])
+        self.assertIn("target_item_id", action_schema["required"])
+        self.assertIn("payload", action_schema["required"])
+        self.assertIn("rationale", action_schema["required"])
 
     def test_default_transport_uses_five_minute_timeout(self):
         seen_timeouts = []
@@ -78,7 +82,7 @@ class LMStudioClientTests(unittest.TestCase):
                     "choices": [
                         {
                             "message": {
-                                "content": '{"items": [], "status_changes": []}',
+                                "content": '{"actions": []}',
                             }
                         }
                     ]
