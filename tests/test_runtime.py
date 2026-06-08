@@ -339,6 +339,32 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(sleeps, [10])
         self.assertEqual(output.getvalue(), "")
 
+    def test_run_worker_loads_lm_studio_model_once_before_cycles(self):
+        calls = []
+        sleeps = []
+
+        class FakeContext:
+            def ensure_lm_studio_model_loaded(self):
+                calls.append("load")
+
+            def run_worker_once(self):
+                calls.append("run")
+                return WorkerResult(scored_messages=1)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = run_worker(
+                make_settings(),
+                once=False,
+                context_factory=lambda settings: FakeContext(),
+                sleep=sleeps.append,
+                stop_requested=lambda: calls.count("run") >= 2,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls, ["load", "run", "run"])
+        self.assertEqual(output.getvalue(), "")
+
     def test_run_worker_failure_returns_nonzero_without_secret_values(self):
         class FailingContext:
             def run_worker_once(self):

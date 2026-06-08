@@ -116,6 +116,9 @@ def _run_worker_loop(
     stop_requested: Callable[[], bool] | None = None,
 ) -> int:
     context = context_factory(settings)
+    ensure_lm_studio_model_loaded = getattr(context, "ensure_lm_studio_model_loaded", None)
+    if callable(ensure_lm_studio_model_loaded):
+        ensure_lm_studio_model_loaded()
     while True:
         try:
             result = context.run_worker_once()

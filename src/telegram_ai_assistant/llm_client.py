@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import json
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .domain import LLMActionType
@@ -70,13 +70,63 @@ class LMStudioClient:
         model: str = "local-model",
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        context_length: int | None = None,
         transport: Transport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.context_length = context_length
         self._transport = transport or self._default_transport
+
+    def load_model(self) -> None:
+        if self.context_length is None:
+            return
+        request = self._build_load_request()
+        try:
+            response = self._transport(request)
+            raw_body = _read_body(response)
+            try:
+                payload = json.loads(raw_body)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as exc:
+                raise LMStudioError(
+                    "LM Studio model load response was not valid JSON",
+                    safe_metadata=_safe_response_metadata(
+                        request,
+                        None,
+                        timeout=self.timeout,
+                        max_tokens=self.max_tokens,
+                        context_length=self.context_length,
+                        failure_stage="model_load_response_json",
+                    ),
+                ) from exc
+            _validate_model_load_response(payload, context_length=self.context_length)
+        except LMStudioError as exc:
+            if exc.safe_metadata:
+                raise
+            raise LMStudioError(
+                str(exc),
+                safe_metadata=_safe_response_metadata(
+                    request,
+                    None,
+                    timeout=self.timeout,
+                    max_tokens=self.max_tokens,
+                    context_length=self.context_length,
+                    failure_stage="model_load_response_read",
+                ),
+            ) from exc
+        except Exception as exc:
+            raise LMStudioError(
+                "LM Studio model load request failed",
+                safe_metadata=_safe_transport_metadata(
+                    request,
+                    exc,
+                    timeout=self.timeout,
+                    max_tokens=self.max_tokens,
+                    context_length=self.context_length,
+                ),
+            ) from exc
 
     def extract_json(self, *, messages: Sequence[Mapping[str, str]]) -> str:
         request = self._build_request(messages)
@@ -149,6 +199,19 @@ class LMStudioClient:
             method="POST",
         )
 
+    def _build_load_request(self) -> Request:
+        body = {
+            "model": self.model,
+            "context_length": self.context_length,
+            "echo_load_config": True,
+        }
+        return Request(
+            f"{_lm_studio_native_api_base_url(self.base_url)}/api/v1/models/load",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
     def _default_transport(self, request: Request) -> bytes:
         with urlopen(request, timeout=self.timeout) as response:
             return response.read()
@@ -177,9 +240,45 @@ def _extract_assistant_content(payload: Any) -> str:
     return content
 
 
-def _safe_endpoint_metadata(request: Request, *, timeout: float, max_tokens: int) -> dict[str, object]:
+def _validate_model_load_response(payload: Any, *, context_length: int) -> None:
+    if not isinstance(payload, Mapping):
+        raise LMStudioError("LM Studio model load response must be an object")
+    if payload.get("status") != "loaded":
+        raise LMStudioError(
+            "LM Studio model load response did not confirm loaded status",
+            safe_metadata={"response_keys": sorted(str(key) for key in payload.keys())[:10]},
+        )
+    load_config = payload.get("load_config")
+    if not isinstance(load_config, Mapping):
+        return
+    applied_context_length = load_config.get("context_length")
+    if isinstance(applied_context_length, int) and applied_context_length != context_length:
+        raise LMStudioError(
+            "LM Studio model load response applied a different context length",
+            safe_metadata={
+                "context_length": context_length,
+                "applied_context_length": applied_context_length,
+            },
+        )
+
+
+def _lm_studio_native_api_base_url(base_url: str) -> str:
+    parsed = urlsplit(base_url.rstrip("/"))
+    path = parsed.path.rstrip("/")
+    if path == "/v1" or path.endswith("/v1"):
+        path = path[:-3]
+    return urlunsplit((parsed.scheme, parsed.netloc, path.rstrip("/"), "", "")).rstrip("/")
+
+
+def _safe_endpoint_metadata(
+    request: Request,
+    *,
+    timeout: float,
+    max_tokens: int,
+    context_length: int | None = None,
+) -> dict[str, object]:
     parsed = urlsplit(request.full_url)
-    return {
+    metadata: dict[str, object] = {
         "endpoint_scheme": parsed.scheme,
         "endpoint_host": parsed.hostname or "",
         "endpoint_path": parsed.path,
@@ -187,6 +286,9 @@ def _safe_endpoint_metadata(request: Request, *, timeout: float, max_tokens: int
         "max_tokens": max_tokens,
         "max_completion_tokens": max_tokens,
     }
+    if context_length is not None:
+        metadata["context_length"] = context_length
+    return metadata
 
 
 def _safe_transport_metadata(
@@ -195,9 +297,15 @@ def _safe_transport_metadata(
     *,
     timeout: float,
     max_tokens: int,
+    context_length: int | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
-        **_safe_endpoint_metadata(request, timeout=timeout, max_tokens=max_tokens),
+        **_safe_endpoint_metadata(
+            request,
+            timeout=timeout,
+            max_tokens=max_tokens,
+            context_length=context_length,
+        ),
         "transport_error_type": type(error).__name__,
     }
     status = getattr(error, "code", None)
@@ -213,9 +321,15 @@ def _safe_response_metadata(
     timeout: float,
     max_tokens: int,
     failure_stage: str,
+    context_length: int | None = None,
 ) -> dict[str, object]:
     metadata = {
-        **_safe_endpoint_metadata(request, timeout=timeout, max_tokens=max_tokens),
+        **_safe_endpoint_metadata(
+            request,
+            timeout=timeout,
+            max_tokens=max_tokens,
+            context_length=context_length,
+        ),
         "failure_stage": failure_stage,
     }
     if isinstance(payload, Mapping):

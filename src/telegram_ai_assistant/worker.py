@@ -19,6 +19,8 @@ SAFE_LLM_FAILURE_METADATA_KEYS = (
     "timeout_seconds",
     "max_tokens",
     "max_completion_tokens",
+    "context_length",
+    "applied_context_length",
     "failure_stage",
     "response_keys",
     "choices_count",

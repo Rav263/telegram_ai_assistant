@@ -173,7 +173,9 @@ class FakeSettingsSnapshot:
     telegram_listener_denied_chat_ids = (888,)
     lm_studio_base_url = "http://host.docker.internal:1234/v1"
     lm_studio_model = "qwen2.5"
+    lm_studio_context_length = 8192
     worker_batch_size = 25
+    worker_open_item_context_limit = 200
     worker_poll_interval_seconds = 10
     worker_item_auto_apply_threshold = 0.8
     worker_status_auto_apply_threshold = 0.8
@@ -803,6 +805,8 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("Settings:", response.text)
         self.assertIn("account_id=owner", response.text)
         self.assertIn("lm_studio_model=qwen2.5", response.text)
+        self.assertIn("lm_studio_context_length=8192", response.text)
+        self.assertIn("worker_open_item_context_limit=200", response.text)
         self.assertNotIn("token", response.text.lower())
         self.assertNotIn("api_hash", response.text.lower())
         self.assertNotIn("database_url", response.text.lower())

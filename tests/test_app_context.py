@@ -189,7 +189,7 @@ class AppContextTests(unittest.TestCase):
                 return WorkerResult(processed_candidates=1, extracted_items=1, saved_items=1)
 
         context = AppContext(
-            settings=make_settings(),
+            settings=replace(make_settings(), worker_open_item_context_limit=30),
             connection_factory=factory,
             worker_factory=FakeWorker,
             lm_studio_client_factory=lambda settings: "llm-client",
@@ -212,7 +212,7 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(captured["message_source"].__class__.__name__, "MessageProcessingRepository")
         self.assertEqual(captured["llm_action_repository"].__class__.__name__, "LLMActionRepository")
         self.assertEqual(captured["open_item_repository"].__class__.__name__, "ItemQueryRepository")
-        self.assertEqual(captured["open_item_context_limit"], 200)
+        self.assertEqual(captured["open_item_context_limit"], 30)
         self.assertEqual(captured["runtime_event_repository"].__class__.__name__, "RuntimeEventRepository")
         self.assertNotIn("backfill_job_runner", captured)
         self.assertEqual(factory.opened, 1)
@@ -271,6 +271,7 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(client.model, "local-model")
         self.assertEqual(client.max_tokens, 8192)
+        self.assertEqual(client.context_length, 8192)
 
     def test_default_bot_api_factory_uses_proxy_url(self):
         api = default_bot_api_factory(
@@ -288,12 +289,14 @@ class AppContextTests(unittest.TestCase):
             make_settings(),
             lm_studio_model="qwen2.5-7b-instruct",
             lm_studio_max_tokens=16384,
+            lm_studio_context_length=32768,
         )
 
         client = default_lm_studio_client_factory(settings)
 
         self.assertEqual(client.model, "qwen2.5-7b-instruct")
         self.assertEqual(client.max_tokens, 16384)
+        self.assertEqual(client.context_length, 32768)
 
     def test_default_telegram_client_factory_passes_mtproxy_settings(self):
         from telegram_ai_assistant import app_context

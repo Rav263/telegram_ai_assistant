@@ -59,6 +59,7 @@ def default_lm_studio_client_factory(settings: Settings):
         base_url=settings.lm_studio_base_url,
         model=settings.lm_studio_model,
         max_tokens=settings.lm_studio_max_tokens,
+        context_length=settings.lm_studio_context_length,
     )
 
 
@@ -115,6 +116,9 @@ class AppContext:
         if transport is None:
             return lm_studio_health_check(self.settings.lm_studio_base_url)
         return lm_studio_health_check(self.settings.lm_studio_base_url, transport)
+
+    def ensure_lm_studio_model_loaded(self) -> None:
+        self.lm_studio_client_factory(self.settings).load_model()
 
     async def run_ingestor_once(self):
         ingestor = self.ingestor_factory(
@@ -212,7 +216,7 @@ class AppContext:
                     connection,
                     account_id=self.settings.telegram_ingest_account_id,
                 ),
-                open_item_context_limit=200,
+                open_item_context_limit=self.settings.worker_open_item_context_limit,
                 llm_run_repository=LLMRunRepository(connection),
                 runtime_event_repository=RuntimeEventRepository(connection),
                 item_auto_apply_threshold=self.settings.worker_item_auto_apply_threshold,

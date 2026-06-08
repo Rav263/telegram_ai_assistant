@@ -30,6 +30,7 @@ class Settings:
     lm_studio_base_url: str = "http://127.0.0.1:1234/v1"
     lm_studio_model: str = "local-model"
     lm_studio_max_tokens: int = 8192
+    lm_studio_context_length: int = 8192
     backfill_days: int = 30
     telegram_ingest_limit: int = 100
     telegram_ingest_debug_messages: bool = False
@@ -43,6 +44,7 @@ class Settings:
     telegram_listener_denied_chat_ids: frozenset[int] = frozenset()
     log_level: str = "INFO"
     worker_batch_size: int = 25
+    worker_open_item_context_limit: int = 200
     worker_poll_interval_seconds: int = 10
     worker_item_auto_apply_threshold: float = 0.8
     worker_status_auto_apply_threshold: float = 0.8
@@ -95,6 +97,11 @@ class Settings:
                 "LM_STUDIO_MAX_TOKENS",
                 cls.lm_studio_max_tokens,
             ),
+            lm_studio_context_length=_optional_positive_int(
+                env,
+                "LM_STUDIO_CONTEXT_LENGTH",
+                cls.lm_studio_context_length,
+            ),
             backfill_days=_optional_int(env, "BACKFILL_DAYS", cls.backfill_days),
             telegram_ingest_limit=_optional_int(
                 env, "TELEGRAM_INGEST_LIMIT", cls.telegram_ingest_limit
@@ -136,6 +143,11 @@ class Settings:
                 env,
                 "WORKER_BATCH_SIZE",
                 cls.worker_batch_size,
+            ),
+            worker_open_item_context_limit=_optional_positive_int(
+                env,
+                "WORKER_OPEN_ITEM_CONTEXT_LIMIT",
+                cls.worker_open_item_context_limit,
             ),
             worker_poll_interval_seconds=_optional_positive_int(
                 env,

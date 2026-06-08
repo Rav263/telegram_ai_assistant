@@ -43,6 +43,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset())
         self.assertEqual(settings.log_level, "INFO")
         self.assertEqual(settings.worker_batch_size, 25)
+        self.assertEqual(settings.worker_open_item_context_limit, 200)
         self.assertEqual(settings.worker_poll_interval_seconds, 10)
         self.assertEqual(settings.worker_item_auto_apply_threshold, 0.8)
         self.assertEqual(settings.worker_status_auto_apply_threshold, 0.8)
@@ -50,6 +51,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.lm_studio_model, "local-model")
         self.assertEqual(settings.lm_studio_max_tokens, 8192)
+        self.assertEqual(settings.lm_studio_context_length, 8192)
         self.assertEqual(settings.backfill_days, 30)
 
     def test_loads_optional_lm_studio_backfill_and_ingest_limit_values(self):
@@ -58,6 +60,7 @@ class SettingsTests(unittest.TestCase):
             "LM_STUDIO_BASE_URL": "http://lmstudio.local:1234/v1",
             "LM_STUDIO_MODEL": "qwen2.5-7b-instruct",
             "LM_STUDIO_MAX_TOKENS": "16384",
+            "LM_STUDIO_CONTEXT_LENGTH": "32768",
             "TELEGRAM_BOT_PROXY_URL": "http://proxy.local:8080",
             "BACKFILL_DAYS": "14",
             "TELEGRAM_INGEST_LIMIT": "25",
@@ -75,6 +78,7 @@ class SettingsTests(unittest.TestCase):
             "TELEGRAM_LISTENER_DENIED_CHAT_IDS": "123, 456",
             "LOG_LEVEL": "debug",
             "WORKER_BATCH_SIZE": "50",
+            "WORKER_OPEN_ITEM_CONTEXT_LIMIT": "30",
             "WORKER_POLL_INTERVAL_SECONDS": "3",
             "WORKER_ITEM_AUTO_APPLY_THRESHOLD": "0.9",
             "WORKER_STATUS_AUTO_APPLY_THRESHOLD": "0.7",
@@ -85,6 +89,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.lm_studio_base_url, "http://lmstudio.local:1234/v1")
         self.assertEqual(settings.lm_studio_model, "qwen2.5-7b-instruct")
         self.assertEqual(settings.lm_studio_max_tokens, 16384)
+        self.assertEqual(settings.lm_studio_context_length, 32768)
         self.assertEqual(settings.telegram_bot_proxy_url, "http://proxy.local:8080")
         self.assertEqual(settings.backfill_days, 14)
         self.assertEqual(settings.telegram_ingest_limit, 25)
@@ -108,6 +113,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset({123, 456}))
         self.assertEqual(settings.log_level, "DEBUG")
         self.assertEqual(settings.worker_batch_size, 50)
+        self.assertEqual(settings.worker_open_item_context_limit, 30)
         self.assertEqual(settings.worker_poll_interval_seconds, 3)
         self.assertEqual(settings.worker_item_auto_apply_threshold, 0.9)
         self.assertEqual(settings.worker_status_auto_apply_threshold, 0.7)
@@ -241,6 +247,15 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             Settings.from_env(env)
 
+    def test_raises_when_worker_open_item_context_limit_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "WORKER_OPEN_ITEM_CONTEXT_LIMIT": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
     def test_raises_when_mtproxy_config_is_partial(self):
         env = {
             **VALID_ENV,
@@ -266,6 +281,15 @@ class SettingsTests(unittest.TestCase):
         env = {
             **VALID_ENV,
             "LM_STUDIO_MAX_TOKENS": "0",
+        }
+
+        with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_lm_studio_context_length_is_not_positive(self):
+        env = {
+            **VALID_ENV,
+            "LM_STUDIO_CONTEXT_LENGTH": "0",
         }
 
         with self.assertRaises(ConfigError):

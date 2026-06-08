@@ -96,6 +96,44 @@ class LMStudioClientTests(unittest.TestCase):
 
         self.assertEqual(seen_timeouts, [300.0])
 
+    def test_load_model_posts_native_lm_studio_context_length(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            return FakeResponse(
+                {
+                    "status": "loaded",
+                    "load_config": {
+                        "context_length": 8192,
+                    },
+                }
+            )
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b",
+            context_length=8192,
+            transport=transport,
+        )
+
+        client.load_model()
+
+        self.assertEqual(len(seen_requests), 1)
+        request = seen_requests[0]
+        self.assertEqual(request.full_url, "http://192.168.0.10:1234/api/v1/models/load")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.get_header("Content-type"), "application/json")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(
+            body,
+            {
+                "model": "google/gemma-4-12b",
+                "context_length": 8192,
+                "echo_load_config": True,
+            },
+        )
+
     def test_extract_json_wraps_transport_failures(self):
         def failing_transport(_request):
             raise TimeoutError("lm studio is unavailable")
