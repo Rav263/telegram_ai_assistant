@@ -65,6 +65,24 @@ class LLMParsingTests(unittest.TestCase):
             set(ALLOWED_UPDATE_FIELDS),
         )
 
+    def test_action_response_format_requires_target_item_id_for_existing_item_actions(self):
+        response_format = action_response_format()
+        branches = response_format["json_schema"]["schema"]["properties"]["actions"]["items"]["oneOf"]
+        target_required_actions = {
+            "update_item_status",
+            "update_item_field",
+            "merge_duplicate",
+            "link_source",
+        }
+
+        for branch in branches:
+            action_type = branch["properties"]["type"]["enum"][0]
+            target_item_schema = branch["properties"]["target_item_id"]
+            if action_type in target_required_actions:
+                self.assertEqual(target_item_schema, {"type": "string", "minLength": 1})
+            else:
+                self.assertEqual(target_item_schema, {"type": ["string", "null"], "minLength": 1})
+
     def test_action_response_format_rejects_empty_required_strings(self):
         response_format = action_response_format()
         branches = response_format["json_schema"]["schema"]["properties"]["actions"]["items"]["oneOf"]

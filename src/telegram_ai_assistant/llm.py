@@ -43,7 +43,7 @@ def _action_schema(action_type: LLMActionType) -> dict[str, object]:
         "type": "object",
         "properties": {
             "type": {"type": "string", "enum": [action_type.value]},
-            "target_item_id": _nullable_string_schema(),
+            "target_item_id": _target_item_id_schema(action_type),
             "payload": _payload_schema(action_type),
             "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
             "source_message_ids": {
@@ -63,6 +63,17 @@ def _action_schema(action_type: LLMActionType) -> dict[str, object]:
         ],
         "additionalProperties": False,
     }
+
+
+def _target_item_id_schema(action_type: LLMActionType) -> dict[str, object]:
+    if action_type in {
+        LLMActionType.UPDATE_ITEM_STATUS,
+        LLMActionType.UPDATE_ITEM_FIELD,
+        LLMActionType.MERGE_DUPLICATE,
+        LLMActionType.LINK_SOURCE,
+    }:
+        return _string_schema()
+    return _nullable_string_schema()
 
 
 def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
