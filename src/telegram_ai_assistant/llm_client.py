@@ -411,8 +411,47 @@ def _safe_endpoint_metadata(
         "max_tokens": max_tokens,
         "max_completion_tokens": max_tokens,
     }
+    metadata.update(_safe_request_body_metadata(request))
     if context_length is not None:
         metadata["context_length"] = context_length
+    return metadata
+
+
+def _safe_request_body_metadata(request: Request) -> dict[str, object]:
+    data = request.data
+    if not data:
+        return {}
+    metadata: dict[str, object] = {"request_body_bytes": len(data)}
+    try:
+        payload = json.loads(data)
+    except (TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        return metadata
+    if not isinstance(payload, Mapping):
+        return metadata
+
+    model = payload.get("model")
+    if isinstance(model, str):
+        metadata["configured_model_key"] = model
+
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        metadata["message_count"] = len(messages)
+        prompt_characters = 0
+        for message in messages:
+            if isinstance(message, Mapping):
+                content = message.get("content")
+                if isinstance(content, str):
+                    prompt_characters += len(content)
+        metadata["prompt_characters"] = prompt_characters
+
+    response_format = payload.get("response_format")
+    if isinstance(response_format, Mapping):
+        json_schema = response_format.get("json_schema")
+        if isinstance(json_schema, Mapping):
+            schema_name = json_schema.get("name")
+            if isinstance(schema_name, str):
+                metadata["response_format_name"] = schema_name
+
     return metadata
 
 

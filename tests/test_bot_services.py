@@ -315,6 +315,10 @@ class BotServicesTests(unittest.TestCase):
                         "context_length": 8192,
                         "applied_context_length": 4096,
                         "configured_model_key": "google/gemma-4-12b-qat",
+                        "request_body_bytes": 5815,
+                        "message_count": 2,
+                        "prompt_characters": 1200,
+                        "response_format_name": "telegram_action_response",
                         "observed_model_count": 4,
                         "observed_instance_count": 2,
                         "mismatched_instance_count": 1,
@@ -345,6 +349,10 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("context_length=8192", text)
         self.assertIn("applied_context_length=4096", text)
         self.assertIn("configured_model_key=google/gemma-4-12b-qat", text)
+        self.assertIn("request_body_bytes=5815", text)
+        self.assertIn("message_count=2", text)
+        self.assertIn("prompt_characters=1200", text)
+        self.assertIn("response_format_name=telegram_action_response", text)
         self.assertIn("observed_model_count=4", text)
         self.assertIn("observed_instance_count=2", text)
         self.assertIn("mismatched_instance_count=1", text)

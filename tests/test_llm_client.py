@@ -407,18 +407,19 @@ class LMStudioClientTests(unittest.TestCase):
                 response_format=TEST_RESPONSE_FORMAT,
             )
 
-        self.assertEqual(
-            captured.exception.safe_metadata,
-            {
-                "endpoint_scheme": "http",
-                "endpoint_host": "127.0.0.1",
-                "endpoint_path": "/v1/chat/completions",
-                "timeout_seconds": 300.0,
-                "max_tokens": 8192,
-                "max_completion_tokens": 8192,
-                "transport_error_type": "URLError",
-            },
-        )
+        metadata = captured.exception.safe_metadata
+        self.assertEqual(metadata["endpoint_scheme"], "http")
+        self.assertEqual(metadata["endpoint_host"], "127.0.0.1")
+        self.assertEqual(metadata["endpoint_path"], "/v1/chat/completions")
+        self.assertEqual(metadata["timeout_seconds"], 300.0)
+        self.assertEqual(metadata["max_tokens"], 8192)
+        self.assertEqual(metadata["max_completion_tokens"], 8192)
+        self.assertEqual(metadata["configured_model_key"], "local-model")
+        self.assertGreater(metadata["request_body_bytes"], 0)
+        self.assertEqual(metadata["message_count"], 1)
+        self.assertEqual(metadata["prompt_characters"], len("extract"))
+        self.assertEqual(metadata["response_format_name"], "test_response")
+        self.assertEqual(metadata["transport_error_type"], "URLError")
         self.assertNotIn("private connection details", str(captured.exception))
 
     def test_extract_json_wraps_invalid_response_shape_with_safe_diagnostics(self):
@@ -441,19 +442,20 @@ class LMStudioClientTests(unittest.TestCase):
                 response_format=TEST_RESPONSE_FORMAT,
             )
 
-        self.assertEqual(
-            captured.exception.safe_metadata,
-            {
-                "endpoint_scheme": "http",
-                "endpoint_host": "127.0.0.1",
-                "endpoint_path": "/v1/chat/completions",
-                "timeout_seconds": 300.0,
-                "max_tokens": 8192,
-                "max_completion_tokens": 8192,
-                "failure_stage": "response_schema",
-                "response_keys": ["error", "object"],
-            },
-        )
+        metadata = captured.exception.safe_metadata
+        self.assertEqual(metadata["endpoint_scheme"], "http")
+        self.assertEqual(metadata["endpoint_host"], "127.0.0.1")
+        self.assertEqual(metadata["endpoint_path"], "/v1/chat/completions")
+        self.assertEqual(metadata["timeout_seconds"], 300.0)
+        self.assertEqual(metadata["max_tokens"], 8192)
+        self.assertEqual(metadata["max_completion_tokens"], 8192)
+        self.assertEqual(metadata["configured_model_key"], "local-model")
+        self.assertGreater(metadata["request_body_bytes"], 0)
+        self.assertEqual(metadata["message_count"], 1)
+        self.assertEqual(metadata["prompt_characters"], len("extract"))
+        self.assertEqual(metadata["response_format_name"], "test_response")
+        self.assertEqual(metadata["failure_stage"], "response_schema")
+        self.assertEqual(metadata["response_keys"], ["error", "object"])
         self.assertNotIn("private model details", str(captured.exception.safe_metadata))
 
     def test_extract_json_wraps_empty_assistant_content_with_safe_shape_diagnostics(self):

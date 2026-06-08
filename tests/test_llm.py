@@ -65,6 +65,19 @@ class LLMParsingTests(unittest.TestCase):
             set(ALLOWED_UPDATE_FIELDS),
         )
 
+    def test_action_response_format_rejects_empty_required_strings(self):
+        response_format = action_response_format()
+        branches = response_format["json_schema"]["schema"]["properties"]["actions"]["items"]["oneOf"]
+        create_item = next(
+            branch for branch in branches if branch["properties"]["type"]["enum"] == ["create_item"]
+        )
+
+        payload_properties = create_item["properties"]["payload"]["properties"]
+
+        self.assertEqual(payload_properties["title"]["minLength"], 1)
+        self.assertEqual(payload_properties["description"]["minLength"], 1)
+        self.assertEqual(create_item["properties"]["rationale"]["minLength"], 1)
+
     def test_action_response_format_returns_fresh_dict(self):
         first = action_response_format()
         second = action_response_format()

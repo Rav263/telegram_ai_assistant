@@ -43,7 +43,7 @@ def _action_schema(action_type: LLMActionType) -> dict[str, object]:
         "type": "object",
         "properties": {
             "type": {"type": "string", "enum": [action_type.value]},
-            "target_item_id": {"type": ["string", "null"]},
+            "target_item_id": _nullable_string_schema(),
             "payload": _payload_schema(action_type),
             "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
             "source_message_ids": {
@@ -51,7 +51,7 @@ def _action_schema(action_type: LLMActionType) -> dict[str, object]:
                 "items": {"type": "integer"},
                 "minItems": 1,
             },
-            "rationale": {"type": "string"},
+            "rationale": _string_schema(),
         },
         "required": [
             "type",
@@ -71,9 +71,9 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
             "type": "object",
             "properties": {
                 "type": {"type": "string", "enum": [item_type.value for item_type in ItemType]},
-                "title": {"type": "string"},
-                "description": {"type": "string"},
-                "due_at": {"type": ["string", "null"]},
+                "title": _string_schema(),
+                "description": _string_schema(),
+                "due_at": _nullable_string_schema(),
                 "metadata": {"type": "object"},
             },
             "required": ["type", "title", "description"],
@@ -84,7 +84,7 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
             "type": "object",
             "properties": {
                 "new_status": {"type": "string", "enum": [status.value for status in ItemStatus]},
-                "completed_at": {"type": ["string", "null"]},
+                "completed_at": _nullable_string_schema(),
             },
             "required": ["new_status"],
             "additionalProperties": False,
@@ -94,7 +94,7 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
             "type": "object",
             "properties": {
                 "field": {"type": "string", "enum": sorted(ALLOWED_UPDATE_FIELDS)},
-                "new_value": {"type": ["string", "null"]},
+                "new_value": _nullable_string_schema(),
             },
             "required": ["field", "new_value"],
             "additionalProperties": False,
@@ -103,7 +103,7 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "duplicate_item_id": {"type": "string"},
+                "duplicate_item_id": _string_schema(),
             },
             "required": ["duplicate_item_id"],
             "additionalProperties": False,
@@ -112,8 +112,8 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
-                "due_at": {"type": "string"},
-                "notification_type": {"type": "string"},
+                "due_at": _string_schema(),
+                "notification_type": _string_schema(),
             },
             "required": ["due_at", "notification_type"],
             "additionalProperties": False,
@@ -132,6 +132,14 @@ def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
             "additionalProperties": False,
         }
     return {"type": "object"}
+
+
+def _string_schema() -> dict[str, object]:
+    return {"type": "string", "minLength": 1}
+
+
+def _nullable_string_schema() -> dict[str, object]:
+    return {"type": ["string", "null"], "minLength": 1}
 
 
 @dataclass(frozen=True)

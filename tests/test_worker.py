@@ -473,6 +473,10 @@ class WorkerTests(unittest.TestCase):
                         "context_length": 8192,
                         "applied_context_length": 4096,
                         "configured_model_key": "google/gemma-4-12b-qat",
+                        "request_body_bytes": 5815,
+                        "message_count": 2,
+                        "prompt_characters": 1200,
+                        "response_format_name": "telegram_action_response",
                         "observed_model_count": 4,
                         "observed_instance_count": 2,
                         "mismatched_instance_count": 1,
@@ -506,6 +510,10 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(metadata["context_length"], 8192)
         self.assertEqual(metadata["applied_context_length"], 4096)
         self.assertEqual(metadata["configured_model_key"], "google/gemma-4-12b-qat")
+        self.assertEqual(metadata["request_body_bytes"], 5815)
+        self.assertEqual(metadata["message_count"], 2)
+        self.assertEqual(metadata["prompt_characters"], 1200)
+        self.assertEqual(metadata["response_format_name"], "telegram_action_response")
         self.assertEqual(metadata["observed_model_count"], 4)
         self.assertEqual(metadata["observed_instance_count"], 2)
         self.assertEqual(metadata["mismatched_instance_count"], 1)
