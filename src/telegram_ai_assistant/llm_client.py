@@ -82,51 +82,88 @@ class LMStudioClient:
 
     def load_model(self) -> None:
         if self.context_length is None:
-            return
+            return None
         request = self._build_load_request()
+        payload = self._send_json_request(
+            request,
+            failure_stage="model_load_response",
+            context_length=self.context_length,
+        )
+        instance_id = _response_instance_id(payload)
         try:
-            response = self._transport(request)
-            raw_body = _read_body(response)
-            try:
-                payload = json.loads(raw_body)
-            except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as exc:
-                raise LMStudioError(
-                    "LM Studio model load response was not valid JSON",
-                    safe_metadata=_safe_response_metadata(
+            _validate_model_load_response(
+                payload,
+                context_length=self.context_length,
+                model=self.model,
+                instance_id=instance_id,
+            )
+        except LMStudioError:
+            if instance_id:
+                self.unload_model(instance_id)
+            raise
+        return instance_id
+
+    def ensure_model_loaded(self) -> None:
+        request = self._build_list_models_request()
+        payload = self._send_json_request(
+            request,
+            failure_stage="model_list_response",
+            context_length=self.context_length,
+        )
+        models = _models_from_payload(payload)
+        configured_model = next((model for model in models if model.get("key") == self.model), None)
+        if configured_model is None:
+            raise LMStudioError(
+                "Configured LM Studio model is not available",
+                safe_metadata={
+                    **_safe_endpoint_metadata(
                         request,
-                        None,
                         timeout=self.timeout,
                         max_tokens=self.max_tokens,
                         context_length=self.context_length,
-                        failure_stage="model_load_response_json",
                     ),
-                ) from exc
-            _validate_model_load_response(payload, context_length=self.context_length)
+                    "failure_stage": "model_missing",
+                    "configured_model_key": self.model,
+                    "observed_model_count": len(models),
+                    "observed_instance_count": 0,
+                    "mismatched_instance_count": 0,
+                },
+            )
+
+        instances = _loaded_instances(configured_model)
+        matching_instances = [
+            instance for instance in instances if _instance_matches_context(instance, self.context_length)
+        ]
+        mismatched_instances = [
+            instance for instance in instances if not _instance_matches_context(instance, self.context_length)
+        ]
+
+        for instance in mismatched_instances:
+            instance_id = _instance_id(instance)
+            if instance_id:
+                self.unload_model(instance_id)
+
+        if matching_instances:
+            return
+
+        self.load_model()
+
+    def unload_model(self, instance_id: str) -> None:
+        request = self._build_unload_request(instance_id)
+        try:
+            self._send_json_request(
+                request,
+                failure_stage="model_unload_failed",
+                context_length=self.context_length,
+            )
         except LMStudioError as exc:
-            if exc.safe_metadata:
-                raise
-            raise LMStudioError(
-                str(exc),
-                safe_metadata=_safe_response_metadata(
-                    request,
-                    None,
-                    timeout=self.timeout,
-                    max_tokens=self.max_tokens,
-                    context_length=self.context_length,
-                    failure_stage="model_load_response_read",
-                ),
-            ) from exc
-        except Exception as exc:
-            raise LMStudioError(
-                "LM Studio model load request failed",
-                safe_metadata=_safe_transport_metadata(
-                    request,
-                    exc,
-                    timeout=self.timeout,
-                    max_tokens=self.max_tokens,
-                    context_length=self.context_length,
-                ),
-            ) from exc
+            metadata = {
+                **exc.safe_metadata,
+                "failure_stage": "model_unload_failed",
+                "configured_model_key": self.model,
+                "instance_id": instance_id,
+            }
+            raise LMStudioError(str(exc), safe_metadata=metadata) from exc
 
     def extract_json(self, *, messages: Sequence[Mapping[str, str]]) -> str:
         request = self._build_request(messages)
@@ -199,6 +236,13 @@ class LMStudioClient:
             method="POST",
         )
 
+    def _build_list_models_request(self) -> Request:
+        return Request(
+            f"{_lm_studio_native_api_base_url(self.base_url)}/api/v1/models",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+
     def _build_load_request(self) -> Request:
         body = {
             "model": self.model,
@@ -212,9 +256,55 @@ class LMStudioClient:
             method="POST",
         )
 
+    def _build_unload_request(self, instance_id: str) -> Request:
+        return Request(
+            f"{_lm_studio_native_api_base_url(self.base_url)}/api/v1/models/unload",
+            data=json.dumps({"instance_id": instance_id}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
     def _default_transport(self, request: Request) -> bytes:
         with urlopen(request, timeout=self.timeout) as response:
             return response.read()
+
+    def _send_json_request(
+        self,
+        request: Request,
+        *,
+        failure_stage: str,
+        context_length: int | None = None,
+    ) -> object:
+        try:
+            response = self._transport(request)
+            raw_body = _read_body(response)
+            try:
+                return json.loads(raw_body)
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as exc:
+                raise LMStudioError(
+                    "LM Studio response was not valid JSON",
+                    safe_metadata=_safe_response_metadata(
+                        request,
+                        None,
+                        timeout=self.timeout,
+                        max_tokens=self.max_tokens,
+                        context_length=context_length,
+                        failure_stage=f"{failure_stage}_json",
+                    ),
+                ) from exc
+        except LMStudioError:
+            raise
+        except Exception as exc:
+            raise LMStudioError(
+                "LM Studio request failed",
+                safe_metadata=_safe_transport_metadata(
+                    request,
+                    exc,
+                    timeout=self.timeout,
+                    max_tokens=self.max_tokens,
+                    context_length=context_length,
+                ),
+            ) from exc
 
 
 def _read_body(response: object) -> bytes | str:
@@ -240,13 +330,77 @@ def _extract_assistant_content(payload: Any) -> str:
     return content
 
 
-def _validate_model_load_response(payload: Any, *, context_length: int) -> None:
+def _models_from_payload(payload: object) -> list[Mapping[str, object]]:
+    if not isinstance(payload, Mapping):
+        raise LMStudioError("LM Studio models response must be an object")
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise LMStudioError("LM Studio models response did not include models")
+    return [model for model in models if isinstance(model, Mapping)]
+
+
+def _loaded_instances(model: Mapping[str, object]) -> list[Mapping[str, object]]:
+    instances = model.get("loaded_instances", [])
+    if not isinstance(instances, list):
+        return []
+    return [instance for instance in instances if isinstance(instance, Mapping)]
+
+
+def _instance_id(instance: Mapping[str, object]) -> str:
+    value = instance.get("id")
+    return value if isinstance(value, str) else ""
+
+
+def _instance_context_length(instance: Mapping[str, object]) -> int | None:
+    config = instance.get("config")
+    if not isinstance(config, Mapping):
+        return None
+    value = config.get("context_length")
+    return value if isinstance(value, int) else None
+
+
+def _instance_matches_context(instance: Mapping[str, object], context_length: int | None) -> bool:
+    if context_length is None:
+        return True
+    return _instance_context_length(instance) == context_length
+
+
+def _response_instance_id(payload: object) -> str:
+    if not isinstance(payload, Mapping):
+        return ""
+    value = payload.get("instance_id")
+    return value if isinstance(value, str) else ""
+
+
+def _validate_model_load_response(
+    payload: Any,
+    *,
+    context_length: int,
+    model: str,
+    instance_id: str,
+) -> None:
     if not isinstance(payload, Mapping):
         raise LMStudioError("LM Studio model load response must be an object")
     if payload.get("status") != "loaded":
         raise LMStudioError(
             "LM Studio model load response did not confirm loaded status",
-            safe_metadata={"response_keys": sorted(str(key) for key in payload.keys())[:10]},
+            safe_metadata={
+                "failure_stage": "model_load_response_schema",
+                "configured_model_key": model,
+                "context_length": context_length,
+                "instance_id": instance_id,
+                "response_keys": sorted(str(key) for key in payload.keys())[:10],
+            },
+        )
+    if not instance_id:
+        raise LMStudioError(
+            "LM Studio model load response did not include instance id",
+            safe_metadata={
+                "failure_stage": "model_load_missing_instance_id",
+                "configured_model_key": model,
+                "context_length": context_length,
+                "response_keys": sorted(str(key) for key in payload.keys())[:10],
+            },
         )
     load_config = payload.get("load_config")
     if not isinstance(load_config, Mapping):
@@ -256,7 +410,10 @@ def _validate_model_load_response(payload: Any, *, context_length: int) -> None:
         raise LMStudioError(
             "LM Studio model load response applied a different context length",
             safe_metadata={
+                "failure_stage": "model_load_config_mismatch",
+                "configured_model_key": model,
                 "context_length": context_length,
+                "instance_id": instance_id,
                 "applied_context_length": applied_context_length,
             },
         )

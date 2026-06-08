@@ -118,7 +118,7 @@ class AppContext:
         return lm_studio_health_check(self.settings.lm_studio_base_url, transport)
 
     def ensure_lm_studio_model_loaded(self) -> None:
-        self.lm_studio_client_factory(self.settings).load_model()
+        self.lm_studio_client_factory(self.settings).ensure_model_loaded()
 
     async def run_ingestor_once(self):
         ingestor = self.ingestor_factory(

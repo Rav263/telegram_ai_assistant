@@ -298,6 +298,26 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(client.max_tokens, 16384)
         self.assertEqual(client.context_length, 32768)
 
+    def test_ensure_lm_studio_model_loaded_uses_lifecycle_reconciliation(self):
+        calls = []
+
+        class FakeLMStudioClient:
+            def ensure_model_loaded(self):
+                calls.append("ensure")
+
+            def load_model(self):
+                calls.append("load")
+
+        context = AppContext(
+            settings=make_settings(),
+            connection_factory=FakeConnectionFactory(),
+            lm_studio_client_factory=lambda settings: FakeLMStudioClient(),
+        )
+
+        context.ensure_lm_studio_model_loaded()
+
+        self.assertEqual(calls, ["ensure"])
+
     def test_default_telegram_client_factory_passes_mtproxy_settings(self):
         from telegram_ai_assistant import app_context
 

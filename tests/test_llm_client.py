@@ -20,6 +20,10 @@ class FakeResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+def request_json_body(request):
+    return json.loads(request.data.decode("utf-8")) if request.data else None
+
+
 class LMStudioClientTests(unittest.TestCase):
     def test_extract_json_posts_chat_completion_and_returns_assistant_content(self):
         seen_requests = []
@@ -103,6 +107,7 @@ class LMStudioClientTests(unittest.TestCase):
             seen_requests.append(request)
             return FakeResponse(
                 {
+                    "instance_id": "google/gemma-4-12b",
                     "status": "loaded",
                     "load_config": {
                         "context_length": 8192,
@@ -133,6 +138,244 @@ class LMStudioClientTests(unittest.TestCase):
                 "echo_load_config": True,
             },
         )
+
+    def test_ensure_model_loaded_reuses_matching_loaded_instance(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            return FakeResponse(
+                {
+                    "models": [
+                        {
+                            "type": "llm",
+                            "key": "google/gemma-4-12b-qat",
+                            "loaded_instances": [
+                                {
+                                    "id": "instance-ok",
+                                    "config": {"context_length": 8192},
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        client.ensure_model_loaded()
+
+        self.assertEqual(len(seen_requests), 1)
+        self.assertEqual(seen_requests[0].full_url, "http://192.168.0.10:1234/api/v1/models")
+        self.assertEqual(seen_requests[0].get_method(), "GET")
+
+    def test_ensure_model_loaded_unloads_mismatched_instance_before_load(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            if request.full_url.endswith("/api/v1/models"):
+                return FakeResponse(
+                    {
+                        "models": [
+                            {
+                                "type": "llm",
+                                "key": "google/gemma-4-12b-qat",
+                                "loaded_instances": [
+                                    {
+                                        "id": "instance-wrong",
+                                        "config": {"context_length": 4096},
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            if request.full_url.endswith("/api/v1/models/unload"):
+                return FakeResponse({"instance_id": "instance-wrong"})
+            return FakeResponse(
+                {
+                    "type": "llm",
+                    "instance_id": "google/gemma-4-12b-qat",
+                    "status": "loaded",
+                    "load_config": {"context_length": 8192},
+                }
+            )
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        client.ensure_model_loaded()
+
+        self.assertEqual([request.get_method() for request in seen_requests], ["GET", "POST", "POST"])
+        self.assertEqual(seen_requests[1].full_url, "http://192.168.0.10:1234/api/v1/models/unload")
+        self.assertEqual(request_json_body(seen_requests[1]), {"instance_id": "instance-wrong"})
+        self.assertEqual(seen_requests[2].full_url, "http://192.168.0.10:1234/api/v1/models/load")
+        self.assertEqual(request_json_body(seen_requests[2])["context_length"], 8192)
+
+    def test_ensure_model_loaded_unloads_mismatched_configured_instances_even_when_one_matches(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            if request.full_url.endswith("/api/v1/models"):
+                return FakeResponse(
+                    {
+                        "models": [
+                            {
+                                "type": "llm",
+                                "key": "google/gemma-4-12b-qat",
+                                "loaded_instances": [
+                                    {"id": "instance-ok", "config": {"context_length": 8192}},
+                                    {"id": "instance-wrong", "config": {"context_length": 4096}},
+                                ],
+                            }
+                        ]
+                    }
+                )
+            return FakeResponse({"instance_id": "instance-wrong"})
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        client.ensure_model_loaded()
+
+        self.assertEqual(
+            [request.full_url for request in seen_requests],
+            [
+                "http://192.168.0.10:1234/api/v1/models",
+                "http://192.168.0.10:1234/api/v1/models/unload",
+            ],
+        )
+        self.assertEqual(request_json_body(seen_requests[1]), {"instance_id": "instance-wrong"})
+
+    def test_ensure_model_loaded_does_not_unload_other_models(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            if request.full_url.endswith("/api/v1/models"):
+                return FakeResponse(
+                    {
+                        "models": [
+                            {
+                                "type": "llm",
+                                "key": "other/model",
+                                "loaded_instances": [
+                                    {"id": "other-instance", "config": {"context_length": 4096}}
+                                ],
+                            },
+                            {
+                                "type": "llm",
+                                "key": "google/gemma-4-12b-qat",
+                                "loaded_instances": [],
+                            },
+                        ]
+                    }
+                )
+            return FakeResponse(
+                {
+                    "type": "llm",
+                    "instance_id": "google/gemma-4-12b-qat",
+                    "status": "loaded",
+                    "load_config": {"context_length": 8192},
+                }
+            )
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        client.ensure_model_loaded()
+
+        self.assertEqual(
+            [request.full_url for request in seen_requests],
+            [
+                "http://192.168.0.10:1234/api/v1/models",
+                "http://192.168.0.10:1234/api/v1/models/load",
+            ],
+        )
+
+    def test_ensure_model_loaded_raises_safe_error_when_configured_model_missing(self):
+        def transport(_request):
+            return FakeResponse(
+                {"models": [{"type": "llm", "key": "other/model", "loaded_instances": []}]}
+            )
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        with self.assertRaises(LMStudioError) as captured:
+            client.ensure_model_loaded()
+
+        self.assertEqual(captured.exception.safe_metadata["failure_stage"], "model_missing")
+        self.assertEqual(captured.exception.safe_metadata["configured_model_key"], "google/gemma-4-12b-qat")
+        self.assertEqual(captured.exception.safe_metadata["context_length"], 8192)
+        self.assertEqual(captured.exception.safe_metadata["observed_model_count"], 1)
+
+    def test_ensure_model_loaded_unloads_new_instance_when_load_applies_wrong_context(self):
+        seen_requests = []
+
+        def transport(request):
+            seen_requests.append(request)
+            if request.full_url.endswith("/api/v1/models"):
+                return FakeResponse(
+                    {
+                        "models": [
+                            {
+                                "type": "llm",
+                                "key": "google/gemma-4-12b-qat",
+                                "loaded_instances": [],
+                            }
+                        ]
+                    }
+                )
+            if request.full_url.endswith("/api/v1/models/load"):
+                return FakeResponse(
+                    {
+                        "type": "llm",
+                        "instance_id": "new-instance",
+                        "status": "loaded",
+                        "load_config": {"context_length": 4096},
+                    }
+                )
+            return FakeResponse({"instance_id": "new-instance"})
+
+        client = LMStudioClient(
+            base_url="http://192.168.0.10:1234/v1",
+            model="google/gemma-4-12b-qat",
+            context_length=8192,
+            transport=transport,
+        )
+
+        with self.assertRaises(LMStudioError) as captured:
+            client.ensure_model_loaded()
+
+        self.assertEqual(seen_requests[-1].full_url, "http://192.168.0.10:1234/api/v1/models/unload")
+        self.assertEqual(request_json_body(seen_requests[-1]), {"instance_id": "new-instance"})
+        self.assertEqual(captured.exception.safe_metadata["failure_stage"], "model_load_config_mismatch")
+        self.assertEqual(captured.exception.safe_metadata["configured_model_key"], "google/gemma-4-12b-qat")
+        self.assertEqual(captured.exception.safe_metadata["applied_context_length"], 4096)
 
     def test_extract_json_wraps_transport_failures(self):
         def failing_transport(_request):
