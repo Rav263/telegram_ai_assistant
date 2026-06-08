@@ -312,6 +312,13 @@ class BotServicesTests(unittest.TestCase):
                         "timeout_seconds": 300.0,
                         "max_tokens": 8192,
                         "max_completion_tokens": 8192,
+                        "context_length": 8192,
+                        "applied_context_length": 4096,
+                        "configured_model_key": "google/gemma-4-12b-qat",
+                        "observed_model_count": 4,
+                        "observed_instance_count": 2,
+                        "mismatched_instance_count": 1,
+                        "instance_id": "instance-wrong",
                         "failure_stage": "response_schema",
                         "response_keys": ["error", "object"],
                         "choices_count": 0,
@@ -335,6 +342,13 @@ class BotServicesTests(unittest.TestCase):
         self.assertIn("timeout_seconds=300.0", text)
         self.assertIn("max_tokens=8192", text)
         self.assertIn("max_completion_tokens=8192", text)
+        self.assertIn("context_length=8192", text)
+        self.assertIn("applied_context_length=4096", text)
+        self.assertIn("configured_model_key=google/gemma-4-12b-qat", text)
+        self.assertIn("observed_model_count=4", text)
+        self.assertIn("observed_instance_count=2", text)
+        self.assertIn("mismatched_instance_count=1", text)
+        self.assertIn("instance_id=instance-wrong", text)
         self.assertIn("failure_stage=response_schema", text)
         self.assertIn("response_keys=['error', 'object']", text)
         self.assertIn("choices_count=0", text)

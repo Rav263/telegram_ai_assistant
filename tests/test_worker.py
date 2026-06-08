@@ -470,6 +470,13 @@ class WorkerTests(unittest.TestCase):
                         "timeout_seconds": 300.0,
                         "max_tokens": 8192,
                         "max_completion_tokens": 8192,
+                        "context_length": 8192,
+                        "applied_context_length": 4096,
+                        "configured_model_key": "google/gemma-4-12b-qat",
+                        "observed_model_count": 4,
+                        "observed_instance_count": 2,
+                        "mismatched_instance_count": 1,
+                        "instance_id": "instance-wrong",
                         "failure_stage": "response_schema",
                         "response_keys": ["error", "object"],
                         "choices_count": 0,
@@ -496,6 +503,13 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(metadata["timeout_seconds"], 300.0)
         self.assertEqual(metadata["max_tokens"], 8192)
         self.assertEqual(metadata["max_completion_tokens"], 8192)
+        self.assertEqual(metadata["context_length"], 8192)
+        self.assertEqual(metadata["applied_context_length"], 4096)
+        self.assertEqual(metadata["configured_model_key"], "google/gemma-4-12b-qat")
+        self.assertEqual(metadata["observed_model_count"], 4)
+        self.assertEqual(metadata["observed_instance_count"], 2)
+        self.assertEqual(metadata["mismatched_instance_count"], 1)
+        self.assertEqual(metadata["instance_id"], "instance-wrong")
         self.assertEqual(metadata["failure_stage"], "response_schema")
         self.assertEqual(metadata["response_keys"], ["error", "object"])
         self.assertEqual(metadata["choices_count"], 0)
