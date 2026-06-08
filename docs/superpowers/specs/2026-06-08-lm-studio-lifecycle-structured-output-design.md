@@ -86,9 +86,9 @@ Flow:
 2. Find the model whose `key` equals configured `LM_STUDIO_MODEL`.
 3. If the model is missing, fail with `LMStudioError` and safe metadata.
 4. Inspect `loaded_instances`.
-5. If an instance has a matching desired config, keep it and return.
-6. If one or more instances of the configured model are loaded with mismatched config, unload each mismatched instance by `instance_id`.
-7. Load the configured model with desired config using `POST /api/v1/models/load` and `echo_load_config=true`.
+5. If any configured-model instance has mismatched config, unload each mismatched instance by `instance_id`, even if another configured-model instance already matches. This keeps LM Studio from selecting an ambiguous wrong instance.
+6. If at least one matching configured-model instance remains after cleanup, keep it and return.
+7. If no matching configured-model instance remains, load the configured model with desired config using `POST /api/v1/models/load` and `echo_load_config=true`.
 8. Validate the load response:
    - status is `loaded`;
    - response includes an `instance_id`;
@@ -120,7 +120,7 @@ def action_response_format() -> dict[str, object]:
     ...
 ```
 
-The schema should be passed into `LMStudioClient` or selected by `extract_json()`, instead of being hidden as a single global. This makes the client reusable and makes tests clearer.
+The schema should be selected by the extraction layer and passed into `LMStudioClient.extract_json()`, instead of being hidden as a client global. This keeps `LMStudioClient` generic and makes the action parser/schema contract local to `llm.py` and `extraction.py`.
 
 Top-level schema:
 
@@ -137,8 +137,8 @@ Top-level schema:
 
 Payload schema:
 
-- First implementation should provide action-level payload definitions through `oneOf` or equivalent JSON Schema constructs if LM Studio handles them reliably in tests.
-- If local model testing shows `oneOf` causes unstable output, fall back to a conservative generic `payload: object` schema and keep parser-level validation. In that case, the schema provider still exists and the limitation is documented in tests/runbook.
+- First implementation should provide action-level definitions through `actions.items.oneOf`, with one branch per `LLMActionType`. Each branch repeats common action fields and pins `type` to a single-value enum. Do not use `payload.oneOf` by itself because it cannot bind sibling `type` to the selected payload.
+- If local model testing shows `oneOf` causes unstable output, fall back to a conservative generic `payload: object` schema behind the same provider and keep parser-level validation. In that case, the limitation is documented in tests/runbook.
 
 The parser remains authoritative. Structured output reduces malformed responses but does not replace validation.
 
@@ -150,8 +150,10 @@ Lifecycle failures should raise `LMStudioError` with safe metadata only:
 - HTTP status and transport error type when available;
 - configured model key;
 - desired context length;
+- observed model count;
 - observed instance count;
 - mismatched instance count;
+- instance id;
 - applied context length;
 - failure stage.
 
@@ -183,11 +185,13 @@ Unit tests:
 - list request uses `GET /api/v1/models`.
 - existing matching loaded instance does not unload or load.
 - mismatched loaded instance unloads by `instance_id` before load.
+- mismatched configured-model instances are unloaded even when one configured-model instance already matches.
 - unrelated loaded model is not unloaded.
 - missing configured model raises safe `LMStudioError`.
 - newly loaded instance with mismatched echoed context is unloaded before raising.
-- chat completion request includes provided structured output schema.
-- schema provider includes top-level `actions` and action required fields.
+- chat completion request includes the response schema provided by the extraction service.
+- extraction service passes `action_response_format()` to `extract_json()`.
+- schema provider includes top-level `actions`, one branch per action type, and fresh dict return values.
 - safe metadata and `/logs` allowlist lifecycle diagnostics.
 
 Integration/smoke tests:
