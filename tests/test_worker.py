@@ -11,7 +11,7 @@ from telegram_ai_assistant.domain import (
     SourceRef,
 )
 from telegram_ai_assistant.filtering import CandidateReason, CandidateScore, CandidateScoringContext
-from telegram_ai_assistant.llm import ParsedLLMAction
+from telegram_ai_assistant.llm import LLMValidationError, ParsedLLMAction
 from telegram_ai_assistant.llm_client import LMStudioError
 from telegram_ai_assistant.worker import Worker, WorkerResult
 
@@ -432,6 +432,26 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(runtime_events.events[0]["event_type"], "llm_failure")
         self.assertEqual(runtime_events.events[0]["metadata"]["error_type"], "RuntimeError")
         self.assertNotIn("LM Studio unavailable", str(runtime_events.events))
+        self.assertEqual(candidate_repository.acknowledged, [])
+
+    def test_records_llm_validation_failure_reason_without_raw_response(self):
+        candidate_repository = FakeCandidateRepository(candidate_messages=[make_message("перезвоню")])
+        runtime_events = FakeRuntimeEventRepository()
+        worker = Worker(
+            candidate_repository=candidate_repository,
+            extraction_service=FakeExtractionService(
+                error=LLMValidationError("actions must be a list")
+            ),
+            runtime_event_repository=runtime_events,
+        )
+
+        result = worker.process_candidates(limit=10)
+
+        metadata = runtime_events.events[0]["metadata"]
+        self.assertEqual(result.failures, 1)
+        self.assertEqual(metadata["error_type"], "LLMValidationError")
+        self.assertEqual(metadata["validation_error"], "actions must be a list")
+        self.assertNotIn("перезвоню", str(runtime_events.events))
         self.assertEqual(candidate_repository.acknowledged, [])
 
     def test_records_lm_failure_safe_diagnostics_without_raw_details(self):

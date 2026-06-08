@@ -43,6 +43,7 @@ SAFE_LOG_METADATA_KEYS = (
     "content_type",
     "content_length",
     "reasoning_content_length",
+    "validation_error",
     "action_type",
     "source_message_count",
     "count",

@@ -9,6 +9,7 @@ from typing import Any
 from .domain import ExtractedItem, ItemStatus, ItemType, LLMAction, LLMActionState, LLMActionType, SourceRef
 from .db.repositories import llm_action_key
 from .filtering import score_message
+from .llm import LLMValidationError
 
 SAFE_LLM_FAILURE_METADATA_KEYS = (
     "endpoint_scheme",
@@ -30,6 +31,7 @@ SAFE_LLM_FAILURE_METADATA_KEYS = (
     "content_type",
     "content_length",
     "reasoning_content_length",
+    "validation_error",
 )
 
 
@@ -274,6 +276,8 @@ class Worker:
             for key in SAFE_LLM_FAILURE_METADATA_KEYS:
                 if key in safe_metadata:
                     metadata[key] = safe_metadata[key]
+        if isinstance(error, LLMValidationError):
+            metadata["validation_error"] = str(error)
         return metadata
 
     def _record_action_failure(self, error: BaseException, parsed_action: Any) -> None:
