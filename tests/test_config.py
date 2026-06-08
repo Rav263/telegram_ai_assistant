@@ -43,7 +43,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset())
         self.assertEqual(settings.log_level, "INFO")
         self.assertEqual(settings.worker_batch_size, 5)
-        self.assertEqual(settings.worker_open_item_context_limit, 50)
+        self.assertEqual(settings.worker_open_item_context_limit, 10)
         self.assertEqual(settings.worker_poll_interval_seconds, 10)
         self.assertEqual(settings.worker_item_auto_apply_threshold, 0.8)
         self.assertEqual(settings.worker_status_auto_apply_threshold, 0.8)

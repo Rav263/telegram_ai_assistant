@@ -3,7 +3,14 @@ import json
 import unittest
 
 from telegram_ai_assistant.domain import ExtractedItem, ItemStatus, ItemType, LLMActionType, Message, MessageDirection, SourceRef
-from telegram_ai_assistant.extraction import ExtractionService, build_extraction_prompt
+from telegram_ai_assistant.extraction import (
+    PROMPT_MESSAGE_TEXT_LIMIT,
+    PROMPT_OPEN_ITEM_LIMIT,
+    PROMPT_OPEN_ITEM_SOURCE_REF_LIMIT,
+    PROMPT_OPEN_ITEM_TITLE_LIMIT,
+    ExtractionService,
+    build_extraction_prompt,
+)
 
 
 def make_message(message_id=200, text="I will call Alice back in 30 minutes."):
@@ -31,6 +38,17 @@ def make_open_item() -> ExtractedItem:
     )
 
 
+def prompt_section(prompt, header):
+    user_message = next(message for message in prompt if message["role"] == "user")
+    content = user_message["content"]
+    start = content.index(header) + len(header)
+    next_header = "\nOpen items:" if header == "Candidate messages:\n" else None
+    if next_header is not None:
+        end = content.index(next_header)
+        return json.loads(content[start:end])
+    return json.loads(content[start:])
+
+
 class FakeLLMClient:
     def __init__(self, response):
         self.response = response
@@ -54,9 +72,62 @@ class ExtractionServiceTests(unittest.TestCase):
         self.assertIn("Завтра нужно заехать на озон, забрать ирригатор", system_message["content"])
         self.assertIn("Candidate messages:", user_message["content"])
         self.assertIn("Open items:", user_message["content"])
-        self.assertIn('"telegram_message_id": 200', user_message["content"])
+        self.assertIn('"telegram_message_id":200', user_message["content"])
         self.assertIn("I will call Alice back", user_message["content"])
-        self.assertIn('"item_id": "item-1"', user_message["content"])
+        self.assertIn('"item_id":"item-1"', user_message["content"])
+
+    def test_build_extraction_prompt_truncates_long_candidate_message_text(self):
+        long_text = "З" * (PROMPT_MESSAGE_TEXT_LIMIT + 200)
+
+        prompt = build_extraction_prompt([make_message(message_id=200, text=long_text)])
+
+        message_record = prompt_section(prompt, "Candidate messages:\n")[0]
+        self.assertEqual(len(message_record["text"]), PROMPT_MESSAGE_TEXT_LIMIT)
+        self.assertTrue(message_record["text_truncated"])
+        self.assertEqual(message_record["text_original_characters"], len(long_text))
+        self.assertEqual(message_record["telegram_message_id"], 200)
+
+    def test_build_extraction_prompt_limits_open_item_title_and_source_refs(self):
+        item = ExtractedItem(
+            item_id="item-long",
+            item_type=ItemType.TASK,
+            title="Т" * (PROMPT_OPEN_ITEM_TITLE_LIMIT + 50),
+            description="",
+            confidence=0.91,
+            status=ItemStatus.OPEN,
+            sources=tuple(SourceRef(chat_id=100, telegram_message_id=message_id) for message_id in range(10)),
+            rationale="",
+        )
+
+        prompt = build_extraction_prompt([make_message()], open_items=[item])
+
+        item_record = prompt_section(prompt, "Open items:\n")[0]
+        self.assertEqual(len(item_record["title"]), PROMPT_OPEN_ITEM_TITLE_LIMIT)
+        self.assertTrue(item_record["title_truncated"])
+        self.assertEqual(item_record["title_original_characters"], PROMPT_OPEN_ITEM_TITLE_LIMIT + 50)
+        self.assertEqual(len(item_record["source_refs"]), PROMPT_OPEN_ITEM_SOURCE_REF_LIMIT)
+        self.assertEqual(item_record["source_ref_count"], 10)
+
+    def test_build_extraction_prompt_caps_open_item_count(self):
+        items = [
+            ExtractedItem(
+                item_id=f"item-{index}",
+                item_type=ItemType.TASK,
+                title=f"Задача {index}",
+                description="",
+                confidence=0.91,
+                status=ItemStatus.OPEN,
+                sources=(),
+                rationale="",
+            )
+            for index in range(PROMPT_OPEN_ITEM_LIMIT + 5)
+        ]
+
+        prompt = build_extraction_prompt([make_message()], open_items=items)
+
+        item_records = prompt_section(prompt, "Open items:\n")
+        self.assertEqual(len(item_records), PROMPT_OPEN_ITEM_LIMIT)
+        self.assertEqual(item_records[-1]["item_id"], f"item-{PROMPT_OPEN_ITEM_LIMIT - 1}")
 
     def test_extract_batch_returns_typed_actions(self):
         llm_payload = json.dumps(

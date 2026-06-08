@@ -44,7 +44,7 @@ class Settings:
     telegram_listener_denied_chat_ids: frozenset[int] = frozenset()
     log_level: str = "INFO"
     worker_batch_size: int = 5
-    worker_open_item_context_limit: int = 50
+    worker_open_item_context_limit: int = 10
     worker_poll_interval_seconds: int = 10
     worker_item_auto_apply_threshold: float = 0.8
     worker_status_auto_apply_threshold: float = 0.8

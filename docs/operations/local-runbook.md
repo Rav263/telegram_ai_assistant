@@ -52,7 +52,7 @@ LM_STUDIO_CONTEXT_LENGTH=8192
 BACKFILL_DAYS=30
 TELEGRAM_DATA_DIR=${HOME}/.telegram/telegram_ai_assistant
 WORKER_BATCH_SIZE=5
-WORKER_OPEN_ITEM_CONTEXT_LIMIT=50
+WORKER_OPEN_ITEM_CONTEXT_LIMIT=10
 WORKER_POLL_INTERVAL_SECONDS=10
 WORKER_ITEM_AUTO_APPLY_THRESHOLD=0.8
 WORKER_STATUS_AUTO_APPLY_THRESHOLD=0.8
@@ -140,7 +140,7 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker
 Worker tuning variables:
 
 - `WORKER_BATCH_SIZE` controls how many messages/candidates one cycle processes, defaulting to 5.
-- `WORKER_OPEN_ITEM_CONTEXT_LIMIT` controls how many open items are included in each LLM prompt, defaulting to 50.
+- `WORKER_OPEN_ITEM_CONTEXT_LIMIT` controls how many open items are included in each LLM prompt, defaulting to 10.
 - `WORKER_POLL_INTERVAL_SECONDS` controls daemon sleep, defaulting to 10.
 - `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
 - `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
