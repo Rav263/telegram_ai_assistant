@@ -15,6 +15,8 @@ VALID_ENV = {
     "TELEGRAM_INGEST_ACCOUNT_ID": "owner",
     "TELEGRAM_INGEST_CHAT_ID": "1001",
     "DATABASE_URL": "postgresql://localhost/telegram_ai",
+    "LM_STUDIO_MAX_TOKENS": "1024",
+    "LM_STUDIO_CONTEXT_LENGTH": "8192",
 }
 
 

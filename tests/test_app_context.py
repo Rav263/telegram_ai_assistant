@@ -168,7 +168,7 @@ class AppContextTests(unittest.TestCase):
         self.assertIs(captured["connection_factory"], factory)
         self.assertEqual(captured["client_factory"], "client-factory")
         self.assertEqual(captured["backfill_job_runner"].__class__.__name__, "ConnectionScopedBackfillJobRunner")
-        self.assertEqual(captured["backfill_batch_size"], 25)
+        self.assertEqual(captured["backfill_batch_size"], 5)
         self.assertEqual(captured["startup_catch_up_limit"], 100)
         self.assertEqual(factory.opened, 0)
 
@@ -204,8 +204,8 @@ class AppContextTests(unittest.TestCase):
         self.assertEqual(result.saved_items, 1)
         self.assertEqual(result.backfill_jobs, 0)
         self.assertEqual(result.backfill_saved_messages, 0)
-        self.assertEqual(captured["message_limit"], 25)
-        self.assertEqual(captured["candidate_limit"], 25)
+        self.assertEqual(captured["message_limit"], 5)
+        self.assertEqual(captured["candidate_limit"], 5)
         self.assertEqual(captured["item_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["status_auto_apply_threshold"], 0.8)
         self.assertEqual(captured["extraction_service"]._llm_client, "llm-client")
@@ -270,7 +270,7 @@ class AppContextTests(unittest.TestCase):
 
         self.assertEqual(client.base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(client.model, "local-model")
-        self.assertEqual(client.max_tokens, 8192)
+        self.assertEqual(client.max_tokens, 1024)
         self.assertEqual(client.context_length, 8192)
 
     def test_default_bot_api_factory_uses_proxy_url(self):

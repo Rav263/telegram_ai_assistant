@@ -42,15 +42,15 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.telegram_listener_allowed_channel_ids, frozenset())
         self.assertEqual(settings.telegram_listener_denied_chat_ids, frozenset())
         self.assertEqual(settings.log_level, "INFO")
-        self.assertEqual(settings.worker_batch_size, 25)
-        self.assertEqual(settings.worker_open_item_context_limit, 200)
+        self.assertEqual(settings.worker_batch_size, 5)
+        self.assertEqual(settings.worker_open_item_context_limit, 50)
         self.assertEqual(settings.worker_poll_interval_seconds, 10)
         self.assertEqual(settings.worker_item_auto_apply_threshold, 0.8)
         self.assertEqual(settings.worker_status_auto_apply_threshold, 0.8)
         self.assertEqual(settings.database_url, "postgresql://localhost/telegram_ai")
         self.assertEqual(settings.lm_studio_base_url, "http://127.0.0.1:1234/v1")
         self.assertEqual(settings.lm_studio_model, "local-model")
-        self.assertEqual(settings.lm_studio_max_tokens, 8192)
+        self.assertEqual(settings.lm_studio_max_tokens, 1024)
         self.assertEqual(settings.lm_studio_context_length, 8192)
         self.assertEqual(settings.backfill_days, 30)
 
@@ -293,6 +293,16 @@ class SettingsTests(unittest.TestCase):
         }
 
         with self.assertRaises(ConfigError):
+            Settings.from_env(env)
+
+    def test_raises_when_lm_studio_max_tokens_leaves_no_prompt_budget(self):
+        env = {
+            **VALID_ENV,
+            "LM_STUDIO_MAX_TOKENS": "8192",
+            "LM_STUDIO_CONTEXT_LENGTH": "8192",
+        }
+
+        with self.assertRaisesRegex(ConfigError, "LM_STUDIO_MAX_TOKENS must be lower"):
             Settings.from_env(env)
 
     def test_raises_when_worker_poll_interval_is_not_positive(self):

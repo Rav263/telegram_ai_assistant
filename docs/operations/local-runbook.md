@@ -47,12 +47,12 @@ TELEGRAM_LISTENER_DENIED_CHAT_IDS=
 DATABASE_URL=postgresql://localhost/telegram_ai_assistant
 LM_STUDIO_BASE_URL=http://127.0.0.1:1234/v1
 LM_STUDIO_MODEL=local-model
-LM_STUDIO_MAX_TOKENS=8192
+LM_STUDIO_MAX_TOKENS=1024
 LM_STUDIO_CONTEXT_LENGTH=8192
 BACKFILL_DAYS=30
 TELEGRAM_DATA_DIR=${HOME}/.telegram/telegram_ai_assistant
-WORKER_BATCH_SIZE=25
-WORKER_OPEN_ITEM_CONTEXT_LIMIT=200
+WORKER_BATCH_SIZE=5
+WORKER_OPEN_ITEM_CONTEXT_LIMIT=50
 WORKER_POLL_INTERVAL_SECONDS=10
 WORKER_ITEM_AUTO_APPLY_THRESHOLD=0.8
 WORKER_STATUS_AUTO_APPLY_THRESHOLD=0.8
@@ -139,8 +139,8 @@ PYTHONPATH=src .venv/bin/python -m telegram_ai_assistant.cli run worker
 
 Worker tuning variables:
 
-- `WORKER_BATCH_SIZE` controls how many messages/candidates one cycle processes, defaulting to 25.
-- `WORKER_OPEN_ITEM_CONTEXT_LIMIT` controls how many open items are included in each LLM prompt, defaulting to 200.
+- `WORKER_BATCH_SIZE` controls how many messages/candidates one cycle processes, defaulting to 5.
+- `WORKER_OPEN_ITEM_CONTEXT_LIMIT` controls how many open items are included in each LLM prompt, defaulting to 50.
 - `WORKER_POLL_INTERVAL_SECONDS` controls daemon sleep, defaulting to 10.
 - `WORKER_ITEM_AUTO_APPLY_THRESHOLD` controls automatic item saving versus review, defaulting to 0.8.
 - `WORKER_STATUS_AUTO_APPLY_THRESHOLD` controls automatic status updates versus review, defaulting to 0.8.
@@ -155,7 +155,7 @@ LLM failures and worker errors are recorded as sanitized runtime events. Ask the
 
 For LM Studio connection failures, `/logs` may include safe technical fields such as `endpoint_scheme`, `endpoint_host`, `endpoint_path`, `http_status`, and `transport_error_type`. If Docker on macOS reports `endpoint_host=127.0.0.1`, set `LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1` in `.env` so the container reaches LM Studio on the host.
 
-LM Studio must have a chat model available before the worker can extract items. Set `LM_STUDIO_MODEL` to the exact model id accepted by LM Studio. On worker startup, the app lists models through LM Studio's native `/api/v1/models` endpoint. If `LM_STUDIO_MODEL` is already loaded with `LM_STUDIO_CONTEXT_LENGTH`, it is reused. If the configured model is loaded with different parameters, the worker unloads that configured-model instance through `/api/v1/models/unload` and then loads it through `/api/v1/models/load` with `LM_STUDIO_CONTEXT_LENGTH`, defaulting to 8192. Other loaded models are not touched. You can do the same manually with `lms load <model_key> --context-length 8192`. For local smoke checks, use the local LM Studio `gemma-2b4` model. For production smoke checks, use `LM_STUDIO_BASE_URL=http://192.168.0.10:1234/v1` with `LM_STUDIO_MODEL=gemma-4-12b-qat`. If `/logs` shows `http_status=400` for `/v1/chat/completions`, first verify that `LM_STUDIO_MODEL` matches a downloaded model. If the LM Studio server log still says the request exceeds the context size, raise `LM_STUDIO_CONTEXT_LENGTH` or lower `WORKER_BATCH_SIZE`, `WORKER_OPEN_ITEM_CONTEXT_LIMIT`, and `LM_STUDIO_MAX_TOKENS`.
+LM Studio must have a chat model available before the worker can extract items. Set `LM_STUDIO_MODEL` to the exact model id accepted by LM Studio. On worker startup, the app lists models through LM Studio's native `/api/v1/models` endpoint. If `LM_STUDIO_MODEL` is already loaded with `LM_STUDIO_CONTEXT_LENGTH`, it is reused. If the configured model is loaded with different parameters, the worker unloads that configured-model instance through `/api/v1/models/unload` and then loads it through `/api/v1/models/load` with `LM_STUDIO_CONTEXT_LENGTH`, defaulting to 8192. Other loaded models are not touched. `LM_STUDIO_MAX_TOKENS` is the completion budget, not the context length; keep it below `LM_STUDIO_CONTEXT_LENGTH` and start with 1024 for structured JSON extraction. You can load the model manually with `lms load <model_key> --context-length 8192`. For local smoke checks, use the local LM Studio `gemma-2b4` model. For production smoke checks, use `LM_STUDIO_BASE_URL=http://192.168.0.10:1234/v1` with `LM_STUDIO_MODEL=gemma-4-12b-qat`. If `/logs` shows `http_status=400` for `/v1/chat/completions`, first verify that `LM_STUDIO_MODEL` matches a downloaded model and that `/logs` request diagnostics show reasonable `request_body_bytes`, `message_count`, `prompt_characters`, and `response_format_name`. If the LM Studio server log still says the request exceeds the context size, unload the configured model instance, reload it with `LM_STUDIO_CONTEXT_LENGTH`, then lower `WORKER_BATCH_SIZE`, `WORKER_OPEN_ITEM_CONTEXT_LIMIT`, and `LM_STUDIO_MAX_TOKENS`.
 
 ## Bot
 
