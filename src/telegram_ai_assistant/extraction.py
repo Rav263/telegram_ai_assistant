@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import json
 
 from .domain import ExtractedItem, Message
-from .llm import ParsedActionResponse, ParsedLLMAction, parse_action_response
+from .llm import ParsedActionResponse, ParsedLLMAction, action_response_format, parse_action_response
 
 
 class ExtractionError(ValueError):
@@ -28,7 +28,7 @@ class ExtractionService:
         open_items: Sequence[ExtractedItem] = (),
     ) -> ExtractionBatchResult:
         prompt = build_extraction_prompt(candidate_messages, open_items=open_items)
-        raw_json = self._llm_client.extract_json(messages=prompt)
+        raw_json = self._llm_client.extract_json(messages=prompt, response_format=action_response_format())
         parsed = parse_action_response(raw_json)
         return parsed_response_to_extraction_result(parsed)
 

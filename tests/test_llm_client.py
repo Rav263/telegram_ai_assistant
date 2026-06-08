@@ -24,6 +24,15 @@ def request_json_body(request):
     return json.loads(request.data.decode("utf-8")) if request.data else None
 
 
+TEST_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "test_response",
+        "schema": {"type": "object"},
+    },
+}
+
+
 class LMStudioClientTests(unittest.TestCase):
     def test_extract_json_posts_chat_completion_and_returns_assistant_content(self):
         seen_requests = []
@@ -48,7 +57,10 @@ class LMStudioClientTests(unittest.TestCase):
             transport=transport,
         )
 
-        content = client.extract_json(messages=[{"role": "user", "content": "extract"}])
+        content = client.extract_json(
+            messages=[{"role": "user", "content": "extract"}],
+            response_format=TEST_RESPONSE_FORMAT,
+        )
 
         self.assertEqual(content, '{"actions": []}')
         self.assertEqual(len(seen_requests), 1)
@@ -62,19 +74,7 @@ class LMStudioClientTests(unittest.TestCase):
         self.assertEqual(body["max_tokens"], 8192)
         self.assertEqual(body["max_completion_tokens"], 8192)
         self.assertFalse(body["stream"])
-        response_format = body["response_format"]
-        self.assertEqual(response_format["type"], "json_schema")
-        json_schema = response_format["json_schema"]
-        self.assertEqual(json_schema["name"], "telegram_action_response")
-        self.assertTrue(json_schema["strict"])
-        schema = json_schema["schema"]
-        self.assertEqual(schema["required"], ["actions"])
-        self.assertFalse(schema["additionalProperties"])
-        action_schema = schema["properties"]["actions"]["items"]
-        self.assertIn("create_item", action_schema["properties"]["type"]["enum"])
-        self.assertIn("target_item_id", action_schema["required"])
-        self.assertIn("payload", action_schema["required"])
-        self.assertIn("rationale", action_schema["required"])
+        self.assertEqual(body["response_format"], TEST_RESPONSE_FORMAT)
 
     def test_default_transport_uses_five_minute_timeout(self):
         seen_timeouts = []
@@ -96,7 +96,10 @@ class LMStudioClientTests(unittest.TestCase):
         client = LMStudioClient()
 
         with patch("telegram_ai_assistant.llm_client.urlopen", side_effect=fake_urlopen):
-            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+            client.extract_json(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=TEST_RESPONSE_FORMAT,
+            )
 
         self.assertEqual(seen_timeouts, [300.0])
 
@@ -384,7 +387,10 @@ class LMStudioClientTests(unittest.TestCase):
         client = LMStudioClient(transport=failing_transport)
 
         with self.assertRaises(LMStudioError):
-            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+            client.extract_json(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=TEST_RESPONSE_FORMAT,
+            )
 
     def test_extract_json_wraps_transport_failures_with_safe_diagnostics(self):
         def failing_transport(_request):
@@ -396,7 +402,10 @@ class LMStudioClientTests(unittest.TestCase):
         )
 
         with self.assertRaises(LMStudioError) as captured:
-            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+            client.extract_json(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=TEST_RESPONSE_FORMAT,
+            )
 
         self.assertEqual(
             captured.exception.safe_metadata,
@@ -427,7 +436,10 @@ class LMStudioClientTests(unittest.TestCase):
         )
 
         with self.assertRaises(LMStudioError) as captured:
-            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+            client.extract_json(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=TEST_RESPONSE_FORMAT,
+            )
 
         self.assertEqual(
             captured.exception.safe_metadata,
@@ -470,7 +482,10 @@ class LMStudioClientTests(unittest.TestCase):
         )
 
         with self.assertRaises(LMStudioError) as captured:
-            client.extract_json(messages=[{"role": "user", "content": "extract"}])
+            client.extract_json(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=TEST_RESPONSE_FORMAT,
+            )
 
         metadata = captured.exception.safe_metadata
         self.assertEqual(metadata["failure_stage"], "response_schema")

@@ -6,51 +6,9 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .domain import LLMActionType
-
 
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_TOKENS = 8192
-EXTRACTION_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "telegram_action_response",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": [action_type.value for action_type in LLMActionType]},
-                            "target_item_id": {"type": ["string", "null"]},
-                            "payload": {"type": "object"},
-                            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                            "source_message_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                            },
-                            "rationale": {"type": "string"},
-                        },
-                        "required": [
-                            "type",
-                            "target_item_id",
-                            "payload",
-                            "confidence",
-                            "source_message_ids",
-                            "rationale",
-                        ],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": ["actions"],
-            "additionalProperties": False,
-        },
-    },
-}
 
 
 class LMStudioError(RuntimeError):
@@ -165,8 +123,13 @@ class LMStudioClient:
             }
             raise LMStudioError(str(exc), safe_metadata=metadata) from exc
 
-    def extract_json(self, *, messages: Sequence[Mapping[str, str]]) -> str:
-        request = self._build_request(messages)
+    def extract_json(
+        self,
+        *,
+        messages: Sequence[Mapping[str, str]],
+        response_format: Mapping[str, object],
+    ) -> str:
+        request = self._build_request(messages, response_format=response_format)
         try:
             response = self._transport(request)
             raw_body = _read_body(response)
@@ -220,13 +183,18 @@ class LMStudioClient:
                 ),
             ) from exc
 
-    def _build_request(self, messages: Sequence[Mapping[str, str]]) -> Request:
+    def _build_request(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        response_format: Mapping[str, object],
+    ) -> Request:
         body = {
             "model": self.model,
             "messages": [dict(message) for message in messages],
             "max_tokens": self.max_tokens,
             "max_completion_tokens": self.max_tokens,
-            "response_format": EXTRACTION_RESPONSE_FORMAT,
+            "response_format": dict(response_format),
             "stream": False,
         }
         return Request(

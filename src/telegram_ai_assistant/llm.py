@@ -15,6 +15,125 @@ class LLMValidationError(ValueError):
 ALLOWED_UPDATE_FIELDS = frozenset({"title", "description", "due_at", "item_type"})
 
 
+def action_response_format() -> dict[str, object]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "telegram_action_response",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [_action_schema(action_type) for action_type in LLMActionType],
+                        },
+                    },
+                },
+                "required": ["actions"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _action_schema(action_type: LLMActionType) -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "type": {"type": "string", "enum": [action_type.value]},
+            "target_item_id": {"type": ["string", "null"]},
+            "payload": _payload_schema(action_type),
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "source_message_ids": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "minItems": 1,
+            },
+            "rationale": {"type": "string"},
+        },
+        "required": [
+            "type",
+            "target_item_id",
+            "payload",
+            "confidence",
+            "source_message_ids",
+            "rationale",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _payload_schema(action_type: LLMActionType) -> dict[str, object]:
+    if action_type == LLMActionType.CREATE_ITEM:
+        return {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": [item_type.value for item_type in ItemType]},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "due_at": {"type": ["string", "null"]},
+                "metadata": {"type": "object"},
+            },
+            "required": ["type", "title", "description"],
+            "additionalProperties": False,
+        }
+    if action_type == LLMActionType.UPDATE_ITEM_STATUS:
+        return {
+            "type": "object",
+            "properties": {
+                "new_status": {"type": "string", "enum": [status.value for status in ItemStatus]},
+                "completed_at": {"type": ["string", "null"]},
+            },
+            "required": ["new_status"],
+            "additionalProperties": False,
+        }
+    if action_type == LLMActionType.UPDATE_ITEM_FIELD:
+        return {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "enum": sorted(ALLOWED_UPDATE_FIELDS)},
+                "new_value": {"type": ["string", "null"]},
+            },
+            "required": ["field", "new_value"],
+            "additionalProperties": False,
+        }
+    if action_type == LLMActionType.MERGE_DUPLICATE:
+        return {
+            "type": "object",
+            "properties": {
+                "duplicate_item_id": {"type": "string"},
+            },
+            "required": ["duplicate_item_id"],
+            "additionalProperties": False,
+        }
+    if action_type == LLMActionType.SCHEDULE_NOTIFICATION:
+        return {
+            "type": "object",
+            "properties": {
+                "due_at": {"type": "string"},
+                "notification_type": {"type": "string"},
+            },
+            "required": ["due_at", "notification_type"],
+            "additionalProperties": False,
+        }
+    if action_type == LLMActionType.LINK_SOURCE:
+        return {
+            "type": "object",
+            "properties": {
+                "source_message_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 1,
+                },
+            },
+            "required": ["source_message_ids"],
+            "additionalProperties": False,
+        }
+    return {"type": "object"}
+
+
 @dataclass(frozen=True)
 class ParsedLLMAction:
     action_type: LLMActionType

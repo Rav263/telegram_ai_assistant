@@ -35,9 +35,11 @@ class FakeLLMClient:
     def __init__(self, response):
         self.response = response
         self.calls = []
+        self.response_formats = []
 
-    def extract_json(self, *, messages):
+    def extract_json(self, *, messages, response_format):
         self.calls.append(messages)
+        self.response_formats.append(response_format)
         return self.response
 
 
@@ -88,6 +90,7 @@ class ExtractionServiceTests(unittest.TestCase):
         result = service.extract_batch([make_message(message_id=200)], open_items=[make_open_item()])
 
         self.assertEqual(len(llm_client.calls), 1)
+        self.assertEqual(llm_client.response_formats[0]["json_schema"]["name"], "telegram_action_response")
         self.assertEqual(len(result.actions), 2)
         self.assertEqual(result.actions[0].action_type, LLMActionType.CREATE_ITEM)
         self.assertEqual(result.actions[0].payload["title"], "Перезвонить Алисе")

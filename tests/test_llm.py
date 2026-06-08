@@ -1,11 +1,78 @@
 import json
 import unittest
 
-from telegram_ai_assistant.domain import ItemStatus, LLMActionType
-from telegram_ai_assistant.llm import LLMValidationError, parse_action_response
+from telegram_ai_assistant.domain import ItemStatus, ItemType, LLMActionType
+from telegram_ai_assistant.llm import (
+    ALLOWED_UPDATE_FIELDS,
+    LLMValidationError,
+    action_response_format,
+    parse_action_response,
+)
 
 
 class LLMParsingTests(unittest.TestCase):
+    def test_action_response_format_provides_strict_json_schema(self):
+        response_format = action_response_format()
+
+        self.assertEqual(response_format["type"], "json_schema")
+        json_schema = response_format["json_schema"]
+        self.assertEqual(json_schema["name"], "telegram_action_response")
+        self.assertTrue(json_schema["strict"])
+        schema = json_schema["schema"]
+        self.assertEqual(schema["required"], ["actions"])
+        branches = schema["properties"]["actions"]["items"]["oneOf"]
+        action_schema = next(
+            branch for branch in branches if branch["properties"]["type"]["enum"] == ["create_item"]
+        )
+        self.assertEqual(
+            action_schema["required"],
+            ["type", "target_item_id", "payload", "confidence", "source_message_ids", "rationale"],
+        )
+        self.assertFalse(action_schema["additionalProperties"])
+
+    def test_action_response_format_has_one_branch_per_action_type(self):
+        response_format = action_response_format()
+
+        action_schema = response_format["json_schema"]["schema"]["properties"]["actions"]["items"]
+        branches = action_schema["oneOf"]
+        branch_types = {branch["properties"]["type"]["enum"][0] for branch in branches}
+
+        self.assertEqual(branch_types, {action_type.value for action_type in LLMActionType})
+
+    def test_action_response_format_uses_domain_enums(self):
+        response_format = action_response_format()
+        branches = response_format["json_schema"]["schema"]["properties"]["actions"]["items"]["oneOf"]
+        create_item = next(
+            branch for branch in branches if branch["properties"]["type"]["enum"] == ["create_item"]
+        )
+        update_status = next(
+            branch for branch in branches if branch["properties"]["type"]["enum"] == ["update_item_status"]
+        )
+        update_field = next(
+            branch for branch in branches if branch["properties"]["type"]["enum"] == ["update_item_field"]
+        )
+
+        self.assertEqual(
+            set(create_item["properties"]["payload"]["properties"]["type"]["enum"]),
+            {item_type.value for item_type in ItemType},
+        )
+        self.assertEqual(
+            set(update_status["properties"]["payload"]["properties"]["new_status"]["enum"]),
+            {status.value for status in ItemStatus},
+        )
+        self.assertEqual(
+            set(update_field["properties"]["payload"]["properties"]["field"]["enum"]),
+            set(ALLOWED_UPDATE_FIELDS),
+        )
+
+    def test_action_response_format_returns_fresh_dict(self):
+        first = action_response_format()
+        second = action_response_format()
+
+        first["json_schema"]["name"] = "mutated"
+
+        self.assertEqual(second["json_schema"]["name"], "telegram_action_response")
+
     def test_parse_valid_action_response(self):
         payload = json.dumps({
             "actions": [
